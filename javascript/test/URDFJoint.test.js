@@ -1,15 +1,19 @@
-import { Vector3 } from 'three';
+import { NullEngine, Scene, Vector3 } from '@babylonjs/core';
 import { URDFJoint, URDFMimicJoint } from '../src/URDFClasses.js';
+
+const engine = new NullEngine();
+const testScene = new Scene(engine);
 
 describe('URDFJoint', () => {
 
     it('should have default value for joint axis', () => {
 
-        const joint1 = new URDFJoint();
+        const joint1 = new URDFJoint('j1', testScene);
         expect(joint1.axis.equals(new Vector3(1, 0, 0))).toBeTruthy();
 
         joint1.axis.x = 2;
-        const joint2 = new URDFJoint().copy(joint1);
+        const joint2 = new URDFJoint('j2', testScene);
+        joint2.copy(joint1, false);
         joint1.axis.x = 3;
         expect(joint1.axis.equals(new Vector3(3, 0, 0))).toBeTruthy();
         expect(joint2.axis.equals(new Vector3(2, 0, 0))).toBeTruthy();
@@ -18,7 +22,7 @@ describe('URDFJoint', () => {
 
     it('should set the jointValues array based on the joint type.', () => {
 
-        const joint = new URDFJoint();
+        const joint = new URDFJoint('j', testScene);
 
         joint.jointType = 'revolute';
         expect(joint.jointValue).toHaveLength(1);
@@ -42,7 +46,7 @@ describe('URDFJoint', () => {
 
     it('should respect upper and lower joint limits.', () => {
 
-        const joint = new URDFJoint();
+        const joint = new URDFJoint('j', testScene);
         joint.limit.upper = 1;
         joint.limit.lower = -1;
         joint.axis = new Vector3(0, 0, 1);
@@ -82,7 +86,7 @@ describe('URDFJoint', () => {
 
     it('should ignore joint limits when "ignoreLimits" is true.', () => {
 
-        const joint = new URDFJoint();
+        const joint = new URDFJoint('j', testScene);
         joint.limit.upper = 1;
         joint.limit.lower = -1;
         joint.ignoreLimits = true;
@@ -114,44 +118,28 @@ describe('URDFJoint', () => {
 
         it('should return true only if the joint value changed.', () => {
 
-            const joint = new URDFJoint();
+            const joint = new URDFJoint('j', testScene);
             joint.limit.upper = 1;
             joint.limit.lower = -1;
             joint.axis = new Vector3(0, 0, 1);
 
             joint.jointType = 'revolute';
-            joint.matrixWorldNeedsUpdate = false;
             expect(joint.setJointValue(0.5)).toBeTruthy();
-            expect(joint.matrixWorldNeedsUpdate).toBeTruthy();
 
-            joint.matrixWorldNeedsUpdate = false;
             expect(joint.setJointValue(0.5)).toBeFalsy();
-            expect(joint.matrixWorldNeedsUpdate).toBeFalsy();
 
-            joint.matrixWorldNeedsUpdate = false;
             expect(joint.setJointValue(1.5)).toBeTruthy();
-            expect(joint.matrixWorldNeedsUpdate).toBeTruthy();
 
-            joint.matrixWorldNeedsUpdate = false;
             expect(joint.setJointValue(1.5)).toBeFalsy();
-            expect(joint.matrixWorldNeedsUpdate).toBeFalsy();
 
             joint.jointType = 'prismatic';
-            joint.matrixWorldNeedsUpdate = false;
             expect(joint.setJointValue(0.5)).toBeTruthy();
-            expect(joint.matrixWorldNeedsUpdate).toBeTruthy();
 
-            joint.matrixWorldNeedsUpdate = false;
             expect(joint.setJointValue(0.5)).toBeFalsy();
-            expect(joint.matrixWorldNeedsUpdate).toBeFalsy();
 
-            joint.matrixWorldNeedsUpdate = false;
             expect(joint.setJointValue(1.5)).toBeTruthy();
-            expect(joint.matrixWorldNeedsUpdate).toBeTruthy();
 
-            joint.matrixWorldNeedsUpdate = false;
             expect(joint.setJointValue(1.5)).toBeFalsy();
-            expect(joint.matrixWorldNeedsUpdate).toBeFalsy();
 
         });
 
@@ -159,17 +147,17 @@ describe('URDFJoint', () => {
 
     describe('setJointValue with mimic joints', () => {
 
-        const joint = new URDFJoint();
+        const joint = new URDFJoint('master', testScene);
         joint.axis = new Vector3(0, 0, 1);
         joint.jointType = 'continuous';
 
-        const mimickerA = new URDFMimicJoint();
+        const mimickerA = new URDFMimicJoint('mimicA', testScene);
         mimickerA.axis = new Vector3(0, 0, 1);
         mimickerA.jointType = 'continuous';
         mimickerA.multiplier = 2;
         mimickerA.offset = 5;
 
-        const mimickerB = new URDFMimicJoint();
+        const mimickerB = new URDFMimicJoint('mimicB', testScene);
         mimickerB.axis = new Vector3(0, 0, 1);
         mimickerB.jointType = 'continuous';
         mimickerB.multiplier = -4;

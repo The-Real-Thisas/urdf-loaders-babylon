@@ -1,4 +1,5 @@
 import { JSDOM } from 'jsdom';
+import { NullEngine, Scene } from '@babylonjs/core';
 import URDFLoader from '../src/URDFLoader.js';
 
 const jsdom = new JSDOM();
@@ -9,9 +10,12 @@ global.Document = window.Document;
 global.Element = window.Element;
 global.XMLHttpRequest = window.XMLHttpRequest;
 
+const engine = new NullEngine();
+const testScene = new Scene(engine);
+
 describe('URDFRobot', () => {
     it('should correctly set all joint angles when using setJointValues.', () => {
-        const loader = new URDFLoader();
+        const loader = new URDFLoader(testScene);
         const robot = loader.parse(`
             <robot name="TEST">
                 <link name="LINK1"/>
@@ -36,7 +40,7 @@ describe('URDFRobot', () => {
     });
 
     it('should parse material colors and name.', () => {
-        const loader = new URDFLoader();
+        const loader = new URDFLoader(testScene);
         const res = loader.parse(`
             <robot name="TEST">
                 <link name="LINK1"/>
@@ -59,7 +63,7 @@ describe('URDFRobot', () => {
     });
 
     it('should clone the links and joints dictionaries correctly.', () => {
-        const loader = new URDFLoader();
+        const loader = new URDFLoader(testScene);
         const res = loader.parse(`
             <robot name="TEST">
                 <link name="LINK1"/>
@@ -82,7 +86,7 @@ describe('URDFRobot', () => {
     });
 
     it('should include visual and collision names in the name map.', () => {
-        const loader = new URDFLoader();
+        const loader = new URDFLoader(testScene);
         loader.parseCollision = true;
         const res = loader.parse(`
             <robot name="TEST">
@@ -121,7 +125,7 @@ describe('URDFRobot', () => {
     });
 
     it('should clone mimic data.', () => {
-        const loader = new URDFLoader();
+        const loader = new URDFLoader(testScene);
         const res = loader.parse(`
             <robot name="TEST">
                 <link name="LINK1"/>

@@ -8,7 +8,7 @@ const files = {
 
 const isExternal = p => {
 
-    return !!(/^three/.test(p) || Object.values(files).filter(f => p.indexOf(f) !== -1).length);
+    return !!(/^@babylonjs/.test(p) || Object.values(files).filter(f => p.indexOf(f) !== -1).length);
 
 };
 
@@ -33,7 +33,7 @@ export default [
                 file: outputPath,
                 sourcemap: true,
 
-                globals: path => /^three/.test(path) ? 'THREE' : null,
+                globals: path => /^@babylonjs/.test(path) ? 'BABYLON' : null,
 
             },
 

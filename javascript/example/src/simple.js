@@ -1,111 +1,109 @@
 import {
-    WebGLRenderer,
-    PerspectiveCamera,
+    Engine,
     Scene,
-    Mesh,
-    PlaneGeometry,
-    ShadowMaterial,
+    ArcRotateCamera,
     DirectionalLight,
-    PCFSoftShadowMap,
-    Color,
-    AmbientLight,
-    Box3,
-    LoadingManager,
-    MathUtils,
-} from 'three';
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+    HemisphericLight,
+    ShadowGenerator,
+    MeshBuilder,
+    StandardMaterial,
+    Color3,
+    Color4,
+    Vector3,
+    Mesh,
+} from '@babylonjs/core';
+import { STLFileLoader } from '@babylonjs/loaders/STL/stlFileLoader.js';
+import '@babylonjs/loaders/glTF';
+
+STLFileLoader.DO_NOT_ALTER_FILE_COORDINATES = true;
 import URDFLoader from '../../src/URDFLoader.js';
 
-let scene, camera, renderer, robot, controls;
+let scene, camera, engine, robot;
 
 init();
-render();
 
 function init() {
 
-    scene = new Scene();
-    scene.background = new Color(0x263238);
+    const canvas = document.createElement('canvas');
+    canvas.style.width = '100%';
+    canvas.style.height = '100%';
+    document.body.appendChild(canvas);
 
-    camera = new PerspectiveCamera();
-    camera.position.set(10, 10, 10);
-    camera.lookAt(0, 0, 0);
+    engine = new Engine(canvas, true);
+    scene = new Scene(engine);
+    scene.useRightHandedSystem = true;
+    scene.clearColor = new Color4(0.149, 0.196, 0.220, 1.0);
 
-    renderer = new WebGLRenderer({ antialias: true });
-    renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = PCFSoftShadowMap;
-    document.body.appendChild(renderer.domElement);
+    camera = new ArcRotateCamera('camera', -Math.PI / 2, Math.PI / 3, 15, Vector3.Zero(), scene);
+    camera.minZ = 0.1;
+    camera.maxZ = 1000;
+    camera.lowerRadiusLimit = 4;
+    camera.attachControl(canvas, true);
+    camera.target.y = 1;
 
-    const directionalLight = new DirectionalLight(0xffffff, 1.0);
-    directionalLight.castShadow = true;
-    directionalLight.shadow.mapSize.setScalar(1024);
-    directionalLight.position.set(5, 30, 5);
-    scene.add(directionalLight);
+    const dirLight = new DirectionalLight('dirLight', new Vector3(-1, -6, -1), scene);
+    dirLight.intensity = 1.0;
+    dirLight.position = new Vector3(5, 30, 5);
 
-    const ambientLight = new AmbientLight(0xffffff, 0.2);
-    scene.add(ambientLight);
+    const shadowGenerator = new ShadowGenerator(1024, dirLight);
+    shadowGenerator.useBlurExponentialShadowMap = true;
 
-    const ground = new Mesh(new PlaneGeometry(), new ShadowMaterial({ opacity: 0.25 }));
-    ground.rotation.x = -Math.PI / 2;
-    ground.scale.setScalar(30);
-    ground.receiveShadow = true;
-    scene.add(ground);
+    const ambientLight = new HemisphericLight('ambient', new Vector3(0, 1, 0), scene);
+    ambientLight.intensity = 0.2;
 
-    controls = new OrbitControls(camera, renderer.domElement);
-    controls.minDistance = 4;
-    controls.target.y = 1;
-    controls.update();
+    const ground = MeshBuilder.CreateGround('ground', { width: 30, height: 30 }, scene);
+    const groundMat = new StandardMaterial('groundMat', scene);
+    groundMat.diffuseColor = Color3.Black();
+    groundMat.specularColor = Color3.Black();
+    groundMat.alpha = 0.25;
+    ground.material = groundMat;
+    ground.receiveShadows = true;
 
     // Load robot
-    const manager = new LoadingManager();
-    const loader = new URDFLoader(manager);
+    const loader = new URDFLoader(scene);
+    loader.manager.onLoad = () => {
+
+        // Rotate so the robot is upright (URDF Z-up -> Babylon Y-up)
+        robot.rotationQuaternion = null;
+        robot.rotation.x = Math.PI / 2;
+
+        robot.traverse(c => {
+            if (c instanceof Mesh) {
+
+                shadowGenerator.addShadowCaster(c);
+
+            }
+        });
+
+        const DEG2RAD = Math.PI / 180;
+        for (let i = 1; i <= 6; i++) {
+
+            robot.joints[`HP${ i }`].setJointValue(30 * DEG2RAD);
+            robot.joints[`KP${ i }`].setJointValue(120 * DEG2RAD);
+            robot.joints[`AP${ i }`].setJointValue(-60 * DEG2RAD);
+
+        }
+
+    };
     loader.load('../../../urdf/T12/urdf/T12_flipped.URDF', result => {
 
         robot = result;
 
     });
 
-    // wait until all the geometry has loaded to add the model to the scene
-    manager.onLoad = () => {
-
-        robot.rotation.x = Math.PI / 2;
-        robot.traverse(c => {
-            c.castShadow = true;
-        });
-        for (let i = 1; i <= 6; i++) {
-
-            robot.joints[`HP${ i }`].setJointValue(MathUtils.degToRad(30));
-            robot.joints[`KP${ i }`].setJointValue(MathUtils.degToRad(120));
-            robot.joints[`AP${ i }`].setJointValue(MathUtils.degToRad(-60));
-
-        }
-        robot.updateMatrixWorld(true);
-
-        const bb = new Box3();
-        bb.setFromObject(robot);
-
-        robot.position.y -= bb.min.y;
-        scene.add(robot);
-
-    };
-
-    onResize();
     window.addEventListener('resize', onResize);
+    onResize();
+
+    engine.runRenderLoop(() => {
+
+        scene.render();
+
+    });
 
 }
 
 function onResize() {
 
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setPixelRatio(window.devicePixelRatio);
-
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
-
-}
-
-function render() {
-
-    requestAnimationFrame(render);
-    renderer.render(scene, camera);
+    engine.resize();
 
 }

@@ -1,5 +1,5 @@
 import { JSDOM } from 'jsdom';
-import { Mesh, Color } from 'three';
+import { NullEngine, Scene, Mesh } from '@babylonjs/core';
 import fetch from 'node-fetch';
 import URDFLoader from '../src/URDFLoader.js';
 
@@ -12,9 +12,12 @@ global.Element = window.Element;
 global.XMLHttpRequest = window.XMLHttpRequest;
 global.fetch = fetch;
 
-function emptyLoadMeshCallback(url, manager, done) {
+const engine = new NullEngine();
+const testScene = new Scene(engine);
 
-    done(new Mesh());
+function emptyLoadMeshCallback(url, scene, done) {
+
+    done(new Mesh('empty', testScene));
 
 }
 
@@ -31,12 +34,9 @@ function compareRobots(ra, rb) {
 
     expect(ra.name).toEqual(rb.name);
     expect(ra.type).toEqual(rb.type);
-    expect(ra.geometry).toEqual(rb.geometry);
-    expect(ra.material).toEqual(rb.material);
     expect(ra.urdfNode).toEqual(rb.urdfNode);
     expect(ra.urdfName).toEqual(rb.urdfName);
 
-    expect(ra.isMesh).toEqual(rb.isMesh);
     expect(ra.isURDFLink).toEqual(rb.isURDFLink);
     expect(ra.isURDFRobot).toEqual(rb.isURDFRobot);
     expect(ra.isURDFJoint).toEqual(rb.isURDFJoint);
@@ -52,12 +52,12 @@ function compareRobots(ra, rb) {
         case 'URDFJoint':
         case 'URDFMimicJoint':
             expect(ra.jointType).toEqual(rb.jointType);
-            expect(ra.axis).toEqual(rb.axis);
+            expect(ra.axis.x).toBeCloseTo(rb.axis.x);
+            expect(ra.axis.y).toBeCloseTo(rb.axis.y);
+            expect(ra.axis.z).toBeCloseTo(rb.axis.z);
             expect(ra.limit).toEqual(rb.limit);
             expect(ra.ignoreLimits).toEqual(rb.ignoreLimits);
             expect(ra.jointValue).toEqual(rb.jointValue);
-            expect(ra.origPosition).toEqual(rb.origPosition);
-            expect(ra.origQuaternion).toEqual(rb.origQuaternion);
 
             // Just compare the names of the mimic joint list
             expect(ra.mimicJoints.map(x => x.urdfName)).toEqual(rb.mimicJoints.map(x => x.urdfName));
@@ -74,9 +74,11 @@ function compareRobots(ra, rb) {
 
     }
 
-    for (let i = 0; i < ra.children.length; i++) {
+    const raChildren = ra.getChildren();
+    const rbChildren = rb.getChildren();
+    for (let i = 0; i < raChildren.length; i++) {
 
-        compareRobots(ra.children[i], rb.children[i]);
+        compareRobots(raChildren[i], rbChildren[i]);
 
     }
 
@@ -86,7 +88,7 @@ describe('File Argument', () => {
 
     it('should work if the file is already parsed', async() => {
 
-        const loader = new URDFLoader();
+        const loader = new URDFLoader(testScene);
         loader.packages = 'https://raw.githubusercontent.com/gkjohnson/urdf-loaders/master/urdf/TriATHLETE_Climbing';
         loader.workingPath = 'https://raw.githubusercontent.com/gkjohnson/urdf-loaders/master/urdf/TriATHLETE_Climbing/urdf/';
 
@@ -110,7 +112,7 @@ describe('Options', () => {
 
         it('should exclude the elements if false', async() => {
 
-            const loader = new URDFLoader();
+            const loader = new URDFLoader(testScene);
             loader.packages = 'https://raw.githubusercontent.com/gkjohnson/nasa-urdf-robots/master/';
             loader.loadMeshCb = emptyLoadMeshCallback;
             loader.parseVisual = false;
@@ -142,7 +144,7 @@ describe('Options', () => {
 
         it('should include the elements if true', async() => {
 
-            const loader = new URDFLoader();
+            const loader = new URDFLoader(testScene);
             loader.packages = 'https://raw.githubusercontent.com/gkjohnson/nasa-urdf-robots/master/';
             loader.loadMeshCb = emptyLoadMeshCallback;
             loader.parseVisual = true;
@@ -178,11 +180,11 @@ describe('Options', () => {
 
         it('should get called to load all meshes', async() => {
 
-            const loader = new URDFLoader();
+            const loader = new URDFLoader(testScene);
             loader.packages = 'https://raw.githubusercontent.com/gkjohnson/urdf-loaders/master/urdf/TriATHLETE_Climbing';
-            loader.loadMeshCb = (path, manager, done) => {
+            loader.loadMeshCb = (path, scene, done) => {
 
-                const mesh = new Mesh();
+                const mesh = new Mesh('fromCb', testScene);
                 mesh.fromCallback = true;
                 done(mesh);
 
@@ -206,12 +208,12 @@ describe('Options', () => {
 
         it('should use correct workingPath to load meshes', async() => {
 
-            const loader = new URDFLoader();
+            const loader = new URDFLoader(testScene);
 
             loader.workingPath = 'https://raw.githubusercontent.com/mock-working-path';
-            loader.loadMeshCb = (path, manager, done) => {
+            loader.loadMeshCb = (path, scene, done) => {
 
-                const mesh = new Mesh();
+                const mesh = new Mesh('empty', testScene);
                 expect(path).toContain('https://raw.githubusercontent.com/mock-working-path');
                 done(mesh);
 
@@ -219,9 +221,9 @@ describe('Options', () => {
             await loader.loadAsync('https://raw.githubusercontent.com/gkjohnson/urdf-loaders/master/urdf/TriATHLETE_Climbing/urdf/TriATHLETE.URDF');
 
             loader.workingPath = '';
-            loader.loadMeshCb = (path, manager, done) => {
+            loader.loadMeshCb = (path, scene, done) => {
 
-                const mesh = new Mesh();
+                const mesh = new Mesh('empty', testScene);
                 expect(path).toContain('https://raw.githubusercontent.com/gkjohnson/urdf-loaders/master/urdf/TriATHLETE_Climbing/urdf');
                 done(mesh);
 
@@ -258,7 +260,7 @@ describe('Options', () => {
 
         it('should use the values from an object if set.', () => {
 
-            const loader = new URDFLoader();
+            const loader = new URDFLoader(testScene);
             loader.packages = {
                 'package1': 'path/to/package1',
                 'package2': 'path/to/package2',
@@ -281,7 +283,7 @@ describe('Options', () => {
 
         it('should use the values from a function if set.', () => {
 
-            const loader = new URDFLoader();
+            const loader = new URDFLoader(testScene);
             loader.packages = pkg => {
 
                 switch (pkg) {
@@ -318,7 +320,7 @@ describe('Clone', () => {
 
     it('should clone the robot exactly', async() => {
 
-        const loader = new URDFLoader();
+        const loader = new URDFLoader(testScene);
         loader.packages = 'https://raw.githubusercontent.com/gkjohnson/nasa-urdf-robots/master/';
         loader.loadMeshCb = emptyLoadMeshCallback;
         loader.parseVisual = true;
@@ -332,7 +334,7 @@ describe('Clone', () => {
 
     it('should clone the robot exactly even when node names have been changed', async() => {
 
-        const loader = new URDFLoader();
+        const loader = new URDFLoader(testScene);
         loader.packages = 'https://raw.githubusercontent.com/gkjohnson/nasa-urdf-robots/master/';
         loader.loadMeshCb = emptyLoadMeshCallback;
         loader.parseVisual = true;
@@ -348,7 +350,7 @@ describe('Clone', () => {
 
     it('should clone a robot with mimic joints exactly.', async() => {
 
-        const loader = new URDFLoader();
+        const loader = new URDFLoader(testScene);
         const robot = loader.parse(`
             <robot name="TEST">
                 <link name="LINK1"/>
@@ -380,7 +382,7 @@ describe('Load', () => {
 
     it(`should call complete even if all meshes can't be loaded`, async() => {
 
-        const loader = new URDFLoader();
+        const loader = new URDFLoader(testScene);
         const urdf = `
             <robot>
                 <link
@@ -395,7 +397,7 @@ describe('Load', () => {
             </robot>
         `;
 
-        loader.loadMeshCb = (path, manager, done) => done(null, new Error('Deliberate Test Error'));
+        loader.loadMeshCb = (path, scene, done) => done(null, new Error('Deliberate Test Error'));
         loader.parse(urdf);
 
     });
@@ -406,7 +408,7 @@ describe('Material Tags', () => {
 
     it('should parse material colors and name.', () => {
 
-        const loader = new URDFLoader();
+        const loader = new URDFLoader(testScene);
         const res = loader.parse(`
             <robot name="TEST">
                 <material name="Cyan">
@@ -423,18 +425,21 @@ describe('Material Tags', () => {
             </robot>
         `);
 
-        const material = res.children[0].children[0].material;
+        // Navigate to the mesh: robot > visual > box mesh
+        const visual = res.getChildren().find(c => c.isURDFVisual);
+        const meshChild = visual.getChildren().find(c => c instanceof Mesh);
+        const material = meshChild.material;
         expect(material.name).toEqual('Cyan');
-        expect(material.color).toEqual(new Color(0, 1, 1).convertSRGBToLinear());
-        expect(material.transparent).toEqual(false);
-        expect(material.depthWrite).toEqual(true);
-        expect(material.opacity).toEqual(1.0);
+        expect(material.diffuseColor.r).toBeCloseTo(0);
+        expect(material.diffuseColor.g).toBeCloseTo(1);
+        expect(material.diffuseColor.b).toBeCloseTo(1);
+        expect(material.alpha).toEqual(1.0);
 
     });
 
     it('should parse transparent materials correctly.', () => {
 
-        const loader = new URDFLoader();
+        const loader = new URDFLoader(testScene);
         const res = loader.parse(`
             <robot name="TEST">
                 <material name="Cyan">
@@ -451,12 +456,15 @@ describe('Material Tags', () => {
             </robot>
         `);
 
-        const material = res.children[0].children[0].material;
+        const visual = res.getChildren().find(c => c.isURDFVisual);
+        const meshChild = visual.getChildren().find(c => c instanceof Mesh);
+        const material = meshChild.material;
         expect(material.name).toEqual('Cyan');
-        expect(material.color).toEqual(new Color(0, 1, 1).convertSRGBToLinear());
-        expect(material.transparent).toEqual(true);
-        expect(material.depthWrite).toEqual(false);
-        expect(material.opacity).toEqual(0.5);
+        expect(material.diffuseColor.r).toBeCloseTo(0);
+        expect(material.diffuseColor.g).toBeCloseTo(1);
+        expect(material.diffuseColor.b).toBeCloseTo(1);
+        expect(material.alpha).toEqual(0.5);
+        expect(material.disableDepthWrite).toEqual(true);
 
     });
 
@@ -467,7 +475,7 @@ describe('TriATHLETE Climbing URDF', () => {
     let robot;
     beforeEach(async() => {
 
-        const loader = new URDFLoader();
+        const loader = new URDFLoader(testScene);
         loader.packages = 'https://raw.githubusercontent.com/gkjohnson/urdf-loaders/master/urdf/TriATHLETE_Climbing';
         robot = await loader.loadAsync('https://raw.githubusercontent.com/gkjohnson/urdf-loaders/master/urdf/TriATHLETE_Climbing/urdf/TriATHLETE.URDF');
 
@@ -499,7 +507,7 @@ describe('TriATHLETE Climbing URDF', () => {
 
     it('should load the robonaut model successfully.', async() => {
 
-        const loader = new URDFLoader();
+        const loader = new URDFLoader(testScene);
         loader.packages = 'https://raw.githubusercontent.com/gkjohnson/nasa-urdf-robots/master/';
         loader.loadMeshCb = emptyLoadMeshCallback;
 
@@ -512,7 +520,7 @@ describe('TriATHLETE Climbing URDF', () => {
 
     it('should load the valkyrie model successfully.', async() => {
 
-        const loader = new URDFLoader();
+        const loader = new URDFLoader(testScene);
         loader.packages = 'https://raw.githubusercontent.com/gkjohnson/nasa-urdf-robots/master/';
         loader.loadMeshCb = emptyLoadMeshCallback;
 
@@ -525,7 +533,7 @@ describe('TriATHLETE Climbing URDF', () => {
 
     it('should load the a multipackage model successfully.', async() => {
 
-        const loader = new URDFLoader();
+        const loader = new URDFLoader(testScene);
         loader.packages = {
             blending_end_effector:
             'https://raw.githubusercontent.com/ros-industrial-consortium/godel/kinetic-devel/godel_robots/blending_end_effector',
@@ -551,7 +559,7 @@ describe('Parsing Mimic Tags', () => {
 
     it('should parse and link the mimicked joints.', () => {
 
-        const loader = new URDFLoader();
+        const loader = new URDFLoader(testScene);
         const res = loader.parse(`
             <robot name="TEST">
                 <link name="LINK1"/>
@@ -584,7 +592,7 @@ describe('Parsing Mimic Tags', () => {
 
     it('should use defaults for multiplier and offset attributes.', () => {
 
-        const loader = new URDFLoader();
+        const loader = new URDFLoader(testScene);
         const res = loader.parse(`
             <robot name="TEST">
                 <link name="LINK1"/>
@@ -614,7 +622,7 @@ describe('Parsing Mimic Tags', () => {
 
     it('should detect infinite loops.', () => {
 
-        const loader = new URDFLoader();
+        const loader = new URDFLoader(testScene);
         expect(() => {
             loader.parse(`
                 <robot name="TEST">

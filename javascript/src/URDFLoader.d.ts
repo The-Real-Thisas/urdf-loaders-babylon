@@ -1,17 +1,25 @@
-import { LoadingManager, Object3D } from 'three';
+import { Scene, TransformNode } from '@babylonjs/core';
 import { URDFRobot } from './URDFClasses';
 
 interface MeshLoadDoneFunc {
-    (mesh: Object3D, err?: Error): void;
+    (mesh: TransformNode | null, err?: Error): void;
 }
 
-interface MeshLoadFunc{
-    (url: string, manager: LoadingManager, onLoad: MeshLoadDoneFunc): void;
+interface MeshLoadFunc {
+    (url: string, scene: Scene | null, onLoad: MeshLoadDoneFunc): void;
+}
+
+interface LoadTracker {
+    onLoad: (() => void) | null;
+    itemStart(): void;
+    itemEnd(): void;
+    itemError(url: string): void;
 }
 
 export default class URDFLoader {
 
-    manager: LoadingManager;
+    scene: Scene | null;
+    manager: LoadTracker;
     defaultMeshLoader: MeshLoadFunc;
 
     // options
@@ -22,13 +30,13 @@ export default class URDFLoader {
     packages: string | { [key: string]: string } | ((targetPkg: string) => string);
     loadMeshCb: MeshLoadFunc;
 
-    constructor(manager?: LoadingManager);
+    constructor(scene?: Scene | null);
     loadAsync(urdf: string): Promise<URDFRobot>;
     load(
         url: string,
         onLoad: (robot: URDFRobot) => void,
-        onProgress?: (progress?: any) => void,
-        onError?: (err?: any) => void
+        onProgress?: ((progress?: any) => void) | null,
+        onError?: ((err?: any) => void) | null
     ): void;
     parse(content: string | Element | Document): URDFRobot;
 

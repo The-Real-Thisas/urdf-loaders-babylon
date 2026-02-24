@@ -2,7 +2,7 @@
     "compilerOptions": {
         "lib": [
             "dom",
-            "es2015"
+            "es2020"
         ],
         "moduleResolution": "node",
         "types": [],
@@ -10,7 +10,8 @@
         "noEmit": true,
         "strict": true,
         "noUnusedParameters": true,
-        "strictNullChecks":true
+        "strictNullChecks": true,
+        "skipLibCheck": false
     },
     "files": [
         "src/URDFLoader.d.ts"

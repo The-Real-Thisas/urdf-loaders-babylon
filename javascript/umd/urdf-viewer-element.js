@@ -1,34 +1,8 @@
 (function (global, factory) {
-    typeof exports === 'object' && typeof module !== 'undefined' ? module.exports = factory(require('three'), require('three/examples/jsm/controls/OrbitControls.js'), require('./URDFLoader.js')) :
-    typeof define === 'function' && define.amd ? define(['three', 'three/examples/jsm/controls/OrbitControls.js', './URDFLoader'], factory) :
-    (global = typeof globalThis !== 'undefined' ? globalThis : global || self, global.URDFViewer = factory(global.THREE, global.THREE, global.URDFLoader));
-})(this, (function (THREE, OrbitControls_js, URDFLoader) { 'use strict';
-
-    function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
-
-    function _interopNamespace(e) {
-        if (e && e.__esModule) return e;
-        var n = Object.create(null);
-        if (e) {
-            Object.keys(e).forEach(function (k) {
-                if (k !== 'default') {
-                    var d = Object.getOwnPropertyDescriptor(e, k);
-                    Object.defineProperty(n, k, d.get ? d : {
-                        enumerable: true,
-                        get: function () { return e[k]; }
-                    });
-                }
-            });
-        }
-        n["default"] = e;
-        return Object.freeze(n);
-    }
-
-    var THREE__namespace = /*#__PURE__*/_interopNamespace(THREE);
-    var URDFLoader__default = /*#__PURE__*/_interopDefaultLegacy(URDFLoader);
-
-    const tempVec2 = new THREE__namespace.Vector2();
-    const emptyRaycast = () => {};
+    typeof exports === 'object' && typeof module !== 'undefined' ? module.exports = factory(require('@babylonjs/core'), require('./URDFLoader.js')) :
+    typeof define === 'function' && define.amd ? define(['@babylonjs/core', './URDFLoader'], factory) :
+    (global = typeof globalThis !== 'undefined' ? globalThis : global || self, global.URDFViewer = factory(global.BABYLON, global.URDFLoader));
+})(this, (function (core, URDFLoader) { 'use strict';
 
     // urdf-viewer element
     // Loads and displays a 3D view of a URDF-formatted robot
@@ -116,85 +90,79 @@
             this.loadMeshFunc = null;
             this.urlModifierFunc = null;
 
+            // Create a canvas element for Babylon.js
+            const canvas = document.createElement('canvas');
+            this._canvas = canvas;
+
+            // Engine setup
+            const engine = new core.Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true });
+            this.engine = engine;
+
             // Scene setup
-            const scene = new THREE__namespace.Scene();
+            const scene = new core.Scene(engine);
+            scene.useRightHandedSystem = true;
+            scene.clearColor = new core.Color4(0, 0, 0, 0);
 
-            const ambientLight = new THREE__namespace.HemisphereLight(this.ambientColor, '#000');
-            ambientLight.groundColor.lerp(ambientLight.color, 0.5 * Math.PI);
+            // Ambient light
+            const ambientLight = new core.HemisphericLight('ambientLight', new core.Vector3(0, 1, 0), scene);
+            const c3 = this._parseColor(this.ambientColor);
+            ambientLight.diffuse = c3;
+            ambientLight.groundColor = core.Color3.Lerp(core.Color3.Black(), c3, 0.5);
             ambientLight.intensity = 0.5;
-            ambientLight.position.set(0, 1, 0);
-            scene.add(ambientLight);
 
-            // Light setup
-            const dirLight = new THREE__namespace.DirectionalLight(0xffffff, Math.PI);
-            dirLight.position.set(4, 10, 1);
-            dirLight.shadow.mapSize.width = 2048;
-            dirLight.shadow.mapSize.height = 2048;
-            dirLight.shadow.normalBias = 0.001;
-            dirLight.castShadow = true;
-            scene.add(dirLight);
-            scene.add(dirLight.target);
+            // Directional light
+            const dirLight = new core.DirectionalLight('dirLight', new core.Vector3(-4, -10, -1), scene);
+            dirLight.intensity = Math.PI;
+            dirLight.position = new core.Vector3(4, 10, 1);
 
-            // Renderer setup
-            const renderer = new THREE__namespace.WebGLRenderer({ antialias: true, alpha: true });
-            renderer.setClearColor(0xffffff);
-            renderer.setClearAlpha(0);
-            renderer.shadowMap.enabled = true;
-            renderer.shadowMap.type = THREE__namespace.PCFSoftShadowMap;
-            renderer.outputColorSpace = THREE__namespace.SRGBColorSpace;
+            // Shadow generator
+            this._shadowGenerator = new core.ShadowGenerator(2048, dirLight);
+            this._shadowGenerator.useBlurExponentialShadowMap = true;
+            this._shadowGenerator.bias = 0.001;
 
-            // Camera setup
-            const camera = new THREE__namespace.PerspectiveCamera(75, 1, 0.1, 1000);
-            camera.position.z = -10;
+            // Camera setup (ArcRotateCamera has built-in orbit controls)
+            const camera = new core.ArcRotateCamera('camera', -Math.PI / 2, Math.PI / 3, 10, core.Vector3.Zero(), scene);
+            camera.minZ = 0.1;
+            camera.maxZ = 1000;
+            camera.lowerRadiusLimit = 0.25;
+            camera.upperRadiusLimit = 50;
+            camera.wheelPrecision = 5;
+            camera.panningSensibility = 50;
+            camera.attachControl(canvas, true);
 
-            // World setup
-            const world = new THREE__namespace.Object3D();
-            scene.add(world);
+            // World node for up-axis rotation
+            const world = new core.TransformNode('world', scene);
+            world.rotationQuaternion = new core.Quaternion();
 
-            const plane = new THREE__namespace.Mesh(
-                new THREE__namespace.PlaneGeometry(40, 40),
-                new THREE__namespace.ShadowMaterial({ side: THREE__namespace.DoubleSide, transparent: true, opacity: 0.25 }),
-            );
-            plane.rotation.x = -Math.PI / 2;
-            plane.position.y = -0.5;
-            plane.receiveShadow = true;
-            plane.scale.set(10, 10, 10);
-            scene.add(plane);
-
-            // Controls setup
-            const controls = new OrbitControls_js.OrbitControls(camera, renderer.domElement);
-            controls.rotateSpeed = 2.0;
-            controls.zoomSpeed = 5;
-            controls.panSpeed = 2;
-            controls.enableZoom = true;
-            controls.enableDamping = false;
-            controls.maxDistance = 50;
-            controls.minDistance = 0.25;
-            controls.addEventListener('change', () => this.recenter());
+            // Ground plane for shadows
+            const ground = core.MeshBuilder.CreateGround('ground', { width: 400, height: 400 }, scene);
+            const groundMaterial = new core.StandardMaterial('groundMat', scene);
+            groundMaterial.diffuseColor = core.Color3.Black();
+            groundMaterial.specularColor = core.Color3.Black();
+            groundMaterial.alpha = 0.25;
+            ground.material = groundMaterial;
+            ground.receiveShadows = true;
+            ground.position.y = -0.5;
+            ground.isPickable = false;
 
             this.scene = scene;
+            this.babylonScene = scene;
             this.world = world;
-            this.renderer = renderer;
             this.camera = camera;
-            this.controls = controls;
-            this.plane = plane;
+            this.controls = camera; // camera is also the controls in Babylon.js
+            this.ground = ground;
             this.directionalLight = dirLight;
             this.ambientLight = ambientLight;
 
             this._setUp(this.up);
 
-            this._collisionMaterial = new THREE.MeshPhongMaterial({
-                transparent: true,
-                opacity: 0.35,
-                shininess: 2.5,
-                premultipliedAlpha: true,
-                color: 0xffbe38,
-                polygonOffset: true,
-                polygonOffsetFactor: -1,
-                polygonOffsetUnits: -1,
-            });
+            this._collisionMaterial = new core.StandardMaterial('collisionMat', scene);
+            this._collisionMaterial.diffuseColor = new core.Color3(1.0, 0.745, 0.22);
+            this._collisionMaterial.alpha = 0.35;
+            this._collisionMaterial.transparencyMode = core.Material.MATERIAL_ALPHABLEND;
 
-            const _renderLoop = () => {
+            // Render loop
+            engine.runRenderLoop(() => {
 
                 if (this.parentNode) {
 
@@ -207,20 +175,36 @@
                             this._updateEnvironment();
                         }
 
-                        this.renderer.render(scene, camera);
                         this._dirty = false;
 
                     }
 
-                    // update controls after the environment in
-                    // case the controls are retargeted
-                    this.controls.update();
+                    scene.render();
 
                 }
-                this._renderLoopId = requestAnimationFrame(_renderLoop);
 
-            };
-            _renderLoop();
+            });
+
+        }
+
+        _parseColor(colorStr) {
+
+            if (!colorStr) return new core.Color3(0.56, 0.63, 0.66);
+            try {
+
+                // Expand shorthand hex
+                if (colorStr.length === 4) {
+
+                    colorStr = '#' + colorStr[1] + colorStr[1] + colorStr[2] + colorStr[2] + colorStr[3] + colorStr[3];
+
+                }
+                return core.Color3.FromHexString(colorStr);
+
+            } catch {
+
+                return new core.Color3(0.56, 0.63, 0.66);
+
+            }
 
         }
 
@@ -244,10 +228,10 @@
 
             }
 
-            // add the renderer
+            // add the canvas
             if (this.childElementCount === 0) {
 
-                this.appendChild(this.renderer.domElement);
+                this.appendChild(this._canvas);
 
             }
 
@@ -258,7 +242,7 @@
 
         disconnectedCallback() {
 
-            cancelAnimationFrame(this._renderLoopId);
+            this.engine.stopRenderLoop();
 
         }
 
@@ -288,8 +272,9 @@
 
                 case 'ambient-color': {
 
-                    this.ambientLight.color.set(this.ambientColor);
-                    this.ambientLight.groundColor.set('#000').lerp(this.ambientLight.color, 0.5);
+                    const c3 = this._parseColor(this.ambientColor);
+                    this.ambientLight.diffuse = c3;
+                    this.ambientLight.groundColor = core.Color3.Lerp(core.Color3.Black(), c3, 0.5);
                     break;
 
                 }
@@ -308,22 +293,16 @@
         /* Public API */
         updateSize() {
 
-            const r = this.renderer;
             const w = this.clientWidth;
             const h = this.clientHeight;
-            const currSize = r.getSize(tempVec2);
 
-            if (currSize.width !== w || currSize.height !== h) {
+            if (w > 0 && h > 0) {
 
-                this.recenter();
+                this._canvas.width = w * window.devicePixelRatio;
+                this._canvas.height = h * window.devicePixelRatio;
+                this.engine.resize();
 
             }
-
-            r.setPixelRatio(window.devicePixelRatio);
-            r.setSize(w, h, false);
-
-            this.camera.aspect = w / h;
-            this.camera.updateProjectionMatrix();
 
         }
 
@@ -357,54 +336,71 @@
 
         setJointValues(values) {
 
-            for (const name in values) this.setJointValue(name, values[name]);
+            for (const name in values) {
+
+                if (Array.isArray(values[name])) {
+
+                    this.setJointValue(name, ...values[name]);
+
+                } else {
+
+                    this.setJointValue(name, values[name]);
+
+                }
+
+            }
 
         }
 
         /* Private Functions */
-        // Updates the position of the plane to be at the
-        // lowest point below the robot and focuses the
-        // camera on the center of the scene
         _updateEnvironment() {
 
             const robot = this.robot;
             if (!robot) return;
 
-            this.world.updateMatrixWorld();
+            // Compute bounding info from visual meshes
+            let min = new core.Vector3(Infinity, Infinity, Infinity);
+            let max = new core.Vector3(-Infinity, -Infinity, -Infinity);
 
-            const bbox = new THREE__namespace.Box3();
-            bbox.makeEmpty();
+            const processNode = (node) => {
+
+                if (node.getBoundingInfo && node instanceof core.Mesh && node.getTotalVertices() > 0) {
+
+                    node.computeWorldMatrix(true);
+                    const bi = node.getBoundingInfo();
+                    min = core.Vector3.Minimize(min, bi.boundingBox.minimumWorld);
+                    max = core.Vector3.Maximize(max, bi.boundingBox.maximumWorld);
+
+                }
+                if (node.getChildren) {
+
+                    node.getChildren().forEach(processNode);
+
+                }
+
+            };
+
             robot.traverse(c => {
                 if (c.isURDFVisual) {
-                    bbox.expandByObject(c);
+
+                    processNode(c);
+
                 }
             });
 
-            const center = bbox.getCenter(new THREE__namespace.Vector3());
-            this.controls.target.y = center.y;
-            this.plane.position.y = bbox.min.y - 1e-3;
+            if (min.x === Infinity) return;
+
+            const center = core.Vector3.Center(min, max);
+            this.camera.target.y = center.y;
+            this.ground.position.y = min.y - 1e-3;
 
             const dirLight = this.directionalLight;
-            dirLight.castShadow = this.displayShadow;
 
             if (this.displayShadow) {
 
-                // Update the shadow camera rendering bounds to encapsulate the
-                // model. We use the bounding sphere of the bounding box for
-                // simplicity -- this could be a tighter fit.
-                const sphere = bbox.getBoundingSphere(new THREE__namespace.Sphere());
-                const minmax = sphere.radius;
-                const cam = dirLight.shadow.camera;
-                cam.left = cam.bottom = -minmax;
-                cam.right = cam.top = minmax;
-
-                // Update the camera to focus on the center of the model so the
-                // shadow can encapsulate it
-                const offset = dirLight.position.clone().sub(dirLight.target.position);
-                dirLight.target.position.copy(center);
-                dirLight.position.copy(center).add(offset);
-
-                cam.updateProjectionMatrix();
+                const radius = core.Vector3.Distance(min, max) / 2;
+                dirLight.shadowMinZ = -radius * 3;
+                dirLight.shadowMaxZ = radius * 3;
 
             }
 
@@ -424,7 +420,6 @@
             if (this.robot) {
 
                 this.robot.traverse(c => c.dispose && c.dispose());
-                this.robot.parent.remove(this.robot);
                 this.robot = null;
 
             }
@@ -457,35 +452,11 @@
 
                     mesh.traverse(c => {
 
-                        if (c.isMesh) {
+                        if (c instanceof core.Mesh) {
 
-                            c.castShadow = true;
-                            c.receiveShadow = true;
-
-                            if (c.material) {
-
-                                const mats =
-                                    (Array.isArray(c.material) ? c.material : [c.material])
-                                        .map(m => {
-
-                                            if (m instanceof THREE__namespace.MeshBasicMaterial) {
-
-                                                m = new THREE__namespace.MeshPhongMaterial();
-
-                                            }
-
-                                            if (m.map) {
-
-                                                m.map.colorSpace = THREE__namespace.SRGBColorSpace;
-
-                                            }
-
-                                            return m;
-
-                                        });
-                                c.material = mats.length === 1 ? mats[0] : mats;
-
-                            }
+                            // Add to shadow generator
+                            this._shadowGenerator.addShadowCaster(c);
+                            c.receiveShadows = true;
 
                         }
 
@@ -494,11 +465,6 @@
                 };
 
                 if (pkg.includes(':') && (pkg.split(':')[1].substring(0, 2)) !== '//') {
-                    // E.g. pkg = "pkg_name: path/to/pkg_name, pk2: path2/to/pk2"}
-
-                    // Convert pkg(s) into a map. E.g.
-                    // { "pkg_name": "path/to/pkg_name",
-                    //   "pk2":      "path2/to/pk2"      }
 
                     pkg = pkg.split(',').reduce((map, value) => {
 
@@ -513,20 +479,29 @@
                 }
 
                 let robot = null;
-                const manager = new THREE__namespace.LoadingManager();
-                manager.onLoad = () => {
+                const loader = new URDFLoader(this.scene);
+                loader.packages = pkg;
+                if (this.loadMeshFunc) {
+
+                    loader.loadMeshCb = this.loadMeshFunc;
+
+                }
+                loader.fetchOptions = { mode: 'cors', credentials: 'same-origin' };
+                loader.parseCollision = true;
+
+                loader.manager.onLoad = () => {
 
                     // If another request has come in to load a new
                     // robot, then ignore this one
                     if (this._requestId !== requestId) {
 
-                        robot.traverse(c => c.dispose && c.dispose());
+                        if (robot) robot.traverse(c => c.dispose && c.dispose());
                         return;
 
                     }
 
                     this.robot = robot;
-                    this.world.add(robot);
+                    robot.parent = this.world;
                     updateMaterials(robot);
 
                     this._setIgnoreLimits(this.ignoreLimits);
@@ -539,17 +514,6 @@
 
                 };
 
-                if (this.urlModifierFunc) {
-
-                    manager.setURLModifier(this.urlModifierFunc);
-
-                }
-
-                const loader = new URDFLoader__default["default"](manager);
-                loader.packages = pkg;
-                loader.loadMeshCb = this.loadMeshFunc;
-                loader.fetchOptions = { mode: 'cors', credentials: 'same-origin' };
-                loader.parseCollision = true;
                 loader.load(urdf, model => robot = model);
 
             }
@@ -569,7 +533,7 @@
 
                 if (c.isURDFCollider) {
 
-                    c.visible = showCollision;
+                    c.setEnabled(showCollision);
                     colliders.push(c);
 
                 }
@@ -580,11 +544,10 @@
 
                 coll.traverse(c => {
 
-                    if (c.isMesh) {
+                    if (c instanceof core.Mesh) {
 
-                        c.raycast = emptyRaycast;
+                        c.isPickable = false;
                         c.material = collisionMaterial;
-                        c.castShadow = false;
 
                     }
 
@@ -603,11 +566,18 @@
             const sign = up.replace(/[^-+]/g, '')[0] || '+';
             const axis = up.replace(/[^XYZ]/gi, '')[0] || 'Z';
 
+            if (!this.world) return;
+
             const PI = Math.PI;
             const HALFPI = PI / 2;
-            if (axis === 'X') this.world.rotation.set(0, 0, sign === '+' ? HALFPI : -HALFPI);
-            if (axis === 'Z') this.world.rotation.set(sign === '+' ? -HALFPI : HALFPI, 0, 0);
-            if (axis === 'Y') this.world.rotation.set(sign === '+' ? 0 : PI, 0, 0);
+
+            let rx = 0, rz = 0;
+            const ry = 0;
+            if (axis === 'X') { rz = sign === '+' ? HALFPI : -HALFPI; }
+            if (axis === 'Z') { rx = sign === '+' ? -HALFPI : HALFPI; }
+            if (axis === 'Y') { rx = sign === '+' ? 0 : PI; }
+
+            this.world.rotationQuaternion = core.Quaternion.RotationYawPitchRoll(ry, rx, rz);
 
         }
 
@@ -636,7 +606,7 @@
 
         }
 
-    };
+    }
 
     return URDFViewer;
 

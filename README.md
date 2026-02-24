@@ -1,10 +1,6 @@
-# urdf-loaders
+# urdf-loader-babylonjs
 
-URDF loading code in both [C# for Unity](./unity/Assets/URDFLoader/) and [Javascript for THREE.js](./javascript/), as well as example [JPL ATHLETE](https://en.wikipedia.org/wiki/ATHLETE) URDF files
-
-[Demo Here!](https://gkjohnson.github.io/urdf-loaders/javascript/example/bundle/)
-
-![Example](./unity/Assets/docs/asset%20store/all-urdfs.png)
+URDF loading code in [Javascript for Babylon.js](./javascript/), as well as example [JPL ATHLETE](https://en.wikipedia.org/wiki/ATHLETE) URDF files
 
 ### Flipped Models
 

@@ -1,10 +1,5 @@
-import * as THREE from 'three';
-import { MeshPhongMaterial } from 'three';
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { Engine, Scene, ArcRotateCamera, HemisphericLight, DirectionalLight, ShadowGenerator, MeshBuilder, StandardMaterial, Color3, Color4, Vector3, Quaternion, Mesh, Material, TransformNode } from '@babylonjs/core';
 import URDFLoader from './URDFLoader.js';
-
-const tempVec2 = new THREE.Vector2();
-const emptyRaycast = () => {};
 
 // urdf-viewer element
 // Loads and displays a 3D view of a URDF-formatted robot
@@ -93,85 +88,79 @@ class URDFViewer extends HTMLElement {
         this.loadMeshFunc = null;
         this.urlModifierFunc = null;
 
+        // Create a canvas element for Babylon.js
+        const canvas = document.createElement('canvas');
+        this._canvas = canvas;
+
+        // Engine setup
+        const engine = new Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true });
+        this.engine = engine;
+
         // Scene setup
-        const scene = new THREE.Scene();
+        const scene = new Scene(engine);
+        scene.useRightHandedSystem = true;
+        scene.clearColor = new Color4(0, 0, 0, 0);
 
-        const ambientLight = new THREE.HemisphereLight(this.ambientColor, '#000');
-        ambientLight.groundColor.lerp(ambientLight.color, 0.5 * Math.PI);
+        // Ambient light
+        const ambientLight = new HemisphericLight('ambientLight', new Vector3(0, 1, 0), scene);
+        const c3 = this._parseColor(this.ambientColor);
+        ambientLight.diffuse = c3;
+        ambientLight.groundColor = Color3.Lerp(Color3.Black(), c3, 0.5);
         ambientLight.intensity = 0.5;
-        ambientLight.position.set(0, 1, 0);
-        scene.add(ambientLight);
 
-        // Light setup
-        const dirLight = new THREE.DirectionalLight(0xffffff, Math.PI);
-        dirLight.position.set(4, 10, 1);
-        dirLight.shadow.mapSize.width = 2048;
-        dirLight.shadow.mapSize.height = 2048;
-        dirLight.shadow.normalBias = 0.001;
-        dirLight.castShadow = true;
-        scene.add(dirLight);
-        scene.add(dirLight.target);
+        // Directional light
+        const dirLight = new DirectionalLight('dirLight', new Vector3(-4, -10, -1), scene);
+        dirLight.intensity = Math.PI;
+        dirLight.position = new Vector3(4, 10, 1);
 
-        // Renderer setup
-        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-        renderer.setClearColor(0xffffff);
-        renderer.setClearAlpha(0);
-        renderer.shadowMap.enabled = true;
-        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-        renderer.outputColorSpace = THREE.SRGBColorSpace;
+        // Shadow generator
+        this._shadowGenerator = new ShadowGenerator(2048, dirLight);
+        this._shadowGenerator.useBlurExponentialShadowMap = true;
+        this._shadowGenerator.bias = 0.001;
 
-        // Camera setup
-        const camera = new THREE.PerspectiveCamera(75, 1, 0.1, 1000);
-        camera.position.z = -10;
+        // Camera setup (ArcRotateCamera has built-in orbit controls)
+        const camera = new ArcRotateCamera('camera', -Math.PI / 2, Math.PI / 3, 10, Vector3.Zero(), scene);
+        camera.minZ = 0.1;
+        camera.maxZ = 1000;
+        camera.lowerRadiusLimit = 0.25;
+        camera.upperRadiusLimit = 50;
+        camera.wheelPrecision = 5;
+        camera.panningSensibility = 50;
+        camera.attachControl(canvas, true);
 
-        // World setup
-        const world = new THREE.Object3D();
-        scene.add(world);
+        // World node for up-axis rotation
+        const world = new TransformNode('world', scene);
+        world.rotationQuaternion = new Quaternion();
 
-        const plane = new THREE.Mesh(
-            new THREE.PlaneGeometry(40, 40),
-            new THREE.ShadowMaterial({ side: THREE.DoubleSide, transparent: true, opacity: 0.25 }),
-        );
-        plane.rotation.x = -Math.PI / 2;
-        plane.position.y = -0.5;
-        plane.receiveShadow = true;
-        plane.scale.set(10, 10, 10);
-        scene.add(plane);
-
-        // Controls setup
-        const controls = new OrbitControls(camera, renderer.domElement);
-        controls.rotateSpeed = 2.0;
-        controls.zoomSpeed = 5;
-        controls.panSpeed = 2;
-        controls.enableZoom = true;
-        controls.enableDamping = false;
-        controls.maxDistance = 50;
-        controls.minDistance = 0.25;
-        controls.addEventListener('change', () => this.recenter());
+        // Ground plane for shadows
+        const ground = MeshBuilder.CreateGround('ground', { width: 400, height: 400 }, scene);
+        const groundMaterial = new StandardMaterial('groundMat', scene);
+        groundMaterial.diffuseColor = Color3.Black();
+        groundMaterial.specularColor = Color3.Black();
+        groundMaterial.alpha = 0.25;
+        ground.material = groundMaterial;
+        ground.receiveShadows = true;
+        ground.position.y = -0.5;
+        ground.isPickable = false;
 
         this.scene = scene;
+        this.babylonScene = scene;
         this.world = world;
-        this.renderer = renderer;
         this.camera = camera;
-        this.controls = controls;
-        this.plane = plane;
+        this.controls = camera; // camera is also the controls in Babylon.js
+        this.ground = ground;
         this.directionalLight = dirLight;
         this.ambientLight = ambientLight;
 
         this._setUp(this.up);
 
-        this._collisionMaterial = new MeshPhongMaterial({
-            transparent: true,
-            opacity: 0.35,
-            shininess: 2.5,
-            premultipliedAlpha: true,
-            color: 0xffbe38,
-            polygonOffset: true,
-            polygonOffsetFactor: -1,
-            polygonOffsetUnits: -1,
-        });
+        this._collisionMaterial = new StandardMaterial('collisionMat', scene);
+        this._collisionMaterial.diffuseColor = new Color3(1.0, 0.745, 0.22);
+        this._collisionMaterial.alpha = 0.35;
+        this._collisionMaterial.transparencyMode = Material.MATERIAL_ALPHABLEND;
 
-        const _renderLoop = () => {
+        // Render loop
+        engine.runRenderLoop(() => {
 
             if (this.parentNode) {
 
@@ -184,20 +173,36 @@ class URDFViewer extends HTMLElement {
                         this._updateEnvironment();
                     }
 
-                    this.renderer.render(scene, camera);
                     this._dirty = false;
 
                 }
 
-                // update controls after the environment in
-                // case the controls are retargeted
-                this.controls.update();
+                scene.render();
 
             }
-            this._renderLoopId = requestAnimationFrame(_renderLoop);
 
-        };
-        _renderLoop();
+        });
+
+    }
+
+    _parseColor(colorStr) {
+
+        if (!colorStr) return new Color3(0.56, 0.63, 0.66);
+        try {
+
+            // Expand shorthand hex
+            if (colorStr.length === 4) {
+
+                colorStr = '#' + colorStr[1] + colorStr[1] + colorStr[2] + colorStr[2] + colorStr[3] + colorStr[3];
+
+            }
+            return Color3.FromHexString(colorStr);
+
+        } catch {
+
+            return new Color3(0.56, 0.63, 0.66);
+
+        }
 
     }
 
@@ -221,10 +226,10 @@ class URDFViewer extends HTMLElement {
 
         }
 
-        // add the renderer
+        // add the canvas
         if (this.childElementCount === 0) {
 
-            this.appendChild(this.renderer.domElement);
+            this.appendChild(this._canvas);
 
         }
 
@@ -235,7 +240,7 @@ class URDFViewer extends HTMLElement {
 
     disconnectedCallback() {
 
-        cancelAnimationFrame(this._renderLoopId);
+        this.engine.stopRenderLoop();
 
     }
 
@@ -265,8 +270,9 @@ class URDFViewer extends HTMLElement {
 
             case 'ambient-color': {
 
-                this.ambientLight.color.set(this.ambientColor);
-                this.ambientLight.groundColor.set('#000').lerp(this.ambientLight.color, 0.5);
+                const c3 = this._parseColor(this.ambientColor);
+                this.ambientLight.diffuse = c3;
+                this.ambientLight.groundColor = Color3.Lerp(Color3.Black(), c3, 0.5);
                 break;
 
             }
@@ -285,22 +291,16 @@ class URDFViewer extends HTMLElement {
     /* Public API */
     updateSize() {
 
-        const r = this.renderer;
         const w = this.clientWidth;
         const h = this.clientHeight;
-        const currSize = r.getSize(tempVec2);
 
-        if (currSize.width !== w || currSize.height !== h) {
+        if (w > 0 && h > 0) {
 
-            this.recenter();
+            this._canvas.width = w * window.devicePixelRatio;
+            this._canvas.height = h * window.devicePixelRatio;
+            this.engine.resize();
 
         }
-
-        r.setPixelRatio(window.devicePixelRatio);
-        r.setSize(w, h, false);
-
-        this.camera.aspect = w / h;
-        this.camera.updateProjectionMatrix();
 
     }
 
@@ -351,49 +351,54 @@ class URDFViewer extends HTMLElement {
     }
 
     /* Private Functions */
-    // Updates the position of the plane to be at the
-    // lowest point below the robot and focuses the
-    // camera on the center of the scene
     _updateEnvironment() {
 
         const robot = this.robot;
         if (!robot) return;
 
-        this.world.updateMatrixWorld();
+        // Compute bounding info from visual meshes
+        let min = new Vector3(Infinity, Infinity, Infinity);
+        let max = new Vector3(-Infinity, -Infinity, -Infinity);
 
-        const bbox = new THREE.Box3();
-        bbox.makeEmpty();
+        const processNode = (node) => {
+
+            if (node.getBoundingInfo && node instanceof Mesh && node.getTotalVertices() > 0) {
+
+                node.computeWorldMatrix(true);
+                const bi = node.getBoundingInfo();
+                min = Vector3.Minimize(min, bi.boundingBox.minimumWorld);
+                max = Vector3.Maximize(max, bi.boundingBox.maximumWorld);
+
+            }
+            if (node.getChildren) {
+
+                node.getChildren().forEach(processNode);
+
+            }
+
+        };
+
         robot.traverse(c => {
             if (c.isURDFVisual) {
-                bbox.expandByObject(c);
+
+                processNode(c);
+
             }
         });
 
-        const center = bbox.getCenter(new THREE.Vector3());
-        this.controls.target.y = center.y;
-        this.plane.position.y = bbox.min.y - 1e-3;
+        if (min.x === Infinity) return;
+
+        const center = Vector3.Center(min, max);
+        this.camera.target.y = center.y;
+        this.ground.position.y = min.y - 1e-3;
 
         const dirLight = this.directionalLight;
-        dirLight.castShadow = this.displayShadow;
 
         if (this.displayShadow) {
 
-            // Update the shadow camera rendering bounds to encapsulate the
-            // model. We use the bounding sphere of the bounding box for
-            // simplicity -- this could be a tighter fit.
-            const sphere = bbox.getBoundingSphere(new THREE.Sphere());
-            const minmax = sphere.radius;
-            const cam = dirLight.shadow.camera;
-            cam.left = cam.bottom = -minmax;
-            cam.right = cam.top = minmax;
-
-            // Update the camera to focus on the center of the model so the
-            // shadow can encapsulate it
-            const offset = dirLight.position.clone().sub(dirLight.target.position);
-            dirLight.target.position.copy(center);
-            dirLight.position.copy(center).add(offset);
-
-            cam.updateProjectionMatrix();
+            const radius = Vector3.Distance(min, max) / 2;
+            dirLight.shadowMinZ = -radius * 3;
+            dirLight.shadowMaxZ = radius * 3;
 
         }
 
@@ -413,7 +418,6 @@ class URDFViewer extends HTMLElement {
         if (this.robot) {
 
             this.robot.traverse(c => c.dispose && c.dispose());
-            this.robot.parent.remove(this.robot);
             this.robot = null;
 
         }
@@ -446,35 +450,11 @@ class URDFViewer extends HTMLElement {
 
                 mesh.traverse(c => {
 
-                    if (c.isMesh) {
+                    if (c instanceof Mesh) {
 
-                        c.castShadow = true;
-                        c.receiveShadow = true;
-
-                        if (c.material) {
-
-                            const mats =
-                                (Array.isArray(c.material) ? c.material : [c.material])
-                                    .map(m => {
-
-                                        if (m instanceof THREE.MeshBasicMaterial) {
-
-                                            m = new THREE.MeshPhongMaterial();
-
-                                        }
-
-                                        if (m.map) {
-
-                                            m.map.colorSpace = THREE.SRGBColorSpace;
-
-                                        }
-
-                                        return m;
-
-                                    });
-                            c.material = mats.length === 1 ? mats[0] : mats;
-
-                        }
+                        // Add to shadow generator
+                        this._shadowGenerator.addShadowCaster(c);
+                        c.receiveShadows = true;
 
                     }
 
@@ -483,11 +463,6 @@ class URDFViewer extends HTMLElement {
             };
 
             if (pkg.includes(':') && (pkg.split(':')[1].substring(0, 2)) !== '//') {
-                // E.g. pkg = "pkg_name: path/to/pkg_name, pk2: path2/to/pk2"}
-
-                // Convert pkg(s) into a map. E.g.
-                // { "pkg_name": "path/to/pkg_name",
-                //   "pk2":      "path2/to/pk2"      }
 
                 pkg = pkg.split(',').reduce((map, value) => {
 
@@ -502,20 +477,29 @@ class URDFViewer extends HTMLElement {
             }
 
             let robot = null;
-            const manager = new THREE.LoadingManager();
-            manager.onLoad = () => {
+            const loader = new URDFLoader(this.scene);
+            loader.packages = pkg;
+            if (this.loadMeshFunc) {
+
+                loader.loadMeshCb = this.loadMeshFunc;
+
+            }
+            loader.fetchOptions = { mode: 'cors', credentials: 'same-origin' };
+            loader.parseCollision = true;
+
+            loader.manager.onLoad = () => {
 
                 // If another request has come in to load a new
                 // robot, then ignore this one
                 if (this._requestId !== requestId) {
 
-                    robot.traverse(c => c.dispose && c.dispose());
+                    if (robot) robot.traverse(c => c.dispose && c.dispose());
                     return;
 
                 }
 
                 this.robot = robot;
-                this.world.add(robot);
+                robot.parent = this.world;
                 updateMaterials(robot);
 
                 this._setIgnoreLimits(this.ignoreLimits);
@@ -528,17 +512,6 @@ class URDFViewer extends HTMLElement {
 
             };
 
-            if (this.urlModifierFunc) {
-
-                manager.setURLModifier(this.urlModifierFunc);
-
-            }
-
-            const loader = new URDFLoader(manager);
-            loader.packages = pkg;
-            loader.loadMeshCb = this.loadMeshFunc;
-            loader.fetchOptions = { mode: 'cors', credentials: 'same-origin' };
-            loader.parseCollision = true;
             loader.load(urdf, model => robot = model);
 
         }
@@ -558,7 +531,7 @@ class URDFViewer extends HTMLElement {
 
             if (c.isURDFCollider) {
 
-                c.visible = showCollision;
+                c.setEnabled(showCollision);
                 colliders.push(c);
 
             }
@@ -569,11 +542,10 @@ class URDFViewer extends HTMLElement {
 
             coll.traverse(c => {
 
-                if (c.isMesh) {
+                if (c instanceof Mesh) {
 
-                    c.raycast = emptyRaycast;
+                    c.isPickable = false;
                     c.material = collisionMaterial;
-                    c.castShadow = false;
 
                 }
 
@@ -592,11 +564,18 @@ class URDFViewer extends HTMLElement {
         const sign = up.replace(/[^-+]/g, '')[0] || '+';
         const axis = up.replace(/[^XYZ]/gi, '')[0] || 'Z';
 
+        if (!this.world) return;
+
         const PI = Math.PI;
         const HALFPI = PI / 2;
-        if (axis === 'X') this.world.rotation.set(0, 0, sign === '+' ? HALFPI : -HALFPI);
-        if (axis === 'Z') this.world.rotation.set(sign === '+' ? -HALFPI : HALFPI, 0, 0);
-        if (axis === 'Y') this.world.rotation.set(sign === '+' ? 0 : PI, 0, 0);
+
+        let rx = 0, rz = 0;
+        const ry = 0;
+        if (axis === 'X') { rz = sign === '+' ? HALFPI : -HALFPI; }
+        if (axis === 'Z') { rx = sign === '+' ? -HALFPI : HALFPI; }
+        if (axis === 'Y') { rx = sign === '+' ? 0 : PI; }
+
+        this.world.rotationQuaternion = Quaternion.RotationYawPitchRoll(ry, rx, rz);
 
     }
 
@@ -625,4 +604,4 @@ class URDFViewer extends HTMLElement {
 
     }
 
-};
+}

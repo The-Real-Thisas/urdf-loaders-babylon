@@ -1,55 +1,114 @@
 (function (global, factory) {
-    typeof exports === 'object' && typeof module !== 'undefined' ? module.exports = factory(require('three'), require('three/examples/jsm/loaders/STLLoader.js'), require('three/examples/jsm/loaders/ColladaLoader.js')) :
-    typeof define === 'function' && define.amd ? define(['three', 'three/examples/jsm/loaders/STLLoader.js', 'three/examples/jsm/loaders/ColladaLoader.js'], factory) :
-    (global = typeof globalThis !== 'undefined' ? globalThis : global || self, global.URDFLoader = factory(global.THREE, global.THREE, global.THREE));
-})(this, (function (THREE, STLLoader_js, ColladaLoader_js) { 'use strict';
+    typeof exports === 'object' && typeof module !== 'undefined' ? module.exports = factory(require('@babylonjs/core'), require('@babylonjs/loaders/STL/stlFileLoader.js'), require('@babylonjs/loaders/glTF')) :
+    typeof define === 'function' && define.amd ? define(['@babylonjs/core', '@babylonjs/loaders/STL/stlFileLoader.js', '@babylonjs/loaders/glTF'], factory) :
+    (global = typeof globalThis !== 'undefined' ? globalThis : global || self, global.URDFLoader = factory(global.BABYLON, global.BABYLON));
+})(this, (function (core, stlFileLoader_js) { 'use strict';
 
-    function _interopNamespace(e) {
-        if (e && e.__esModule) return e;
-        var n = Object.create(null);
-        if (e) {
-            Object.keys(e).forEach(function (k) {
-                if (k !== 'default') {
-                    var d = Object.getOwnPropertyDescriptor(e, k);
-                    Object.defineProperty(n, k, d.get ? d : {
-                        enumerable: true,
-                        get: function () { return e[k]; }
-                    });
-                }
-            });
-        }
-        n["default"] = e;
-        return Object.freeze(n);
-    }
+    const _tempAxis = new core.Vector3();
+    const _tempQuat = new core.Quaternion();
+    const _tempQuat2 = new core.Quaternion();
+    const _tempScale = new core.Vector3(1.0, 1.0, 1.0);
+    const _tempPosition = new core.Vector3();
+    const _tempMatrix = new core.Matrix();
+    const _tempOrigMatrix = new core.Matrix();
 
-    var THREE__namespace = /*#__PURE__*/_interopNamespace(THREE);
+    class URDFBase extends core.TransformNode {
 
-    const _tempAxis = new THREE.Vector3();
-    const _tempEuler = new THREE.Euler();
-    const _tempTransform = new THREE.Matrix4();
-    const _tempOrigTransform = new THREE.Matrix4();
-    const _tempQuat = new THREE.Quaternion();
-    const _tempScale = new THREE.Vector3(1.0, 1.0, 1.0);
-    const _tempPosition = new THREE.Vector3();
+        constructor(name = '', scene = null) {
 
-    class URDFBase extends THREE.Object3D {
-
-        constructor(...args) {
-
-            super(...args);
+            super(name, scene);
+            this.rotationQuaternion = new core.Quaternion();
             this.urdfNode = null;
             this.urdfName = '';
 
         }
 
-        copy(source, recursive) {
+        // Depth-first traverse matching Three.js behavior
+        traverse(callback) {
 
-            super.copy(source, recursive);
+            callback(this);
+            for (const child of this.getChildren()) {
+
+                if (child.traverse) {
+
+                    child.traverse(callback);
+
+                } else {
+
+                    callback(child);
+
+                }
+
+            }
+
+        }
+
+        copy(source, recursive) {
 
             this.urdfNode = source.urdfNode;
             this.urdfName = source.urdfName;
 
+            this.name = source.name;
+            this.position.copyFrom(source.position);
+            if (source.rotationQuaternion) {
+
+                if (!this.rotationQuaternion) {
+
+                    this.rotationQuaternion = new core.Quaternion();
+
+                }
+                this.rotationQuaternion.copyFrom(source.rotationQuaternion);
+
+            }
+            this.scaling.copyFrom(source.scaling);
+
+            if (recursive) {
+
+                const children = source.getChildren();
+                for (const child of children) {
+
+                    let clonedChild;
+                    if (child._clone && child instanceof URDFBase) {
+
+                        clonedChild = child._clone();
+
+                    } else if (child.clone) {
+
+                        // For non-URDF nodes (e.g., Babylon.js Mesh), use native clone
+                        clonedChild = child.clone(child.name);
+
+                    }
+                    if (clonedChild) {
+
+                        clonedChild.parent = this;
+
+                    }
+
+                }
+
+            }
+
             return this;
+
+        }
+
+        clone(name, newParent) {
+
+            const cloned = this._clone();
+            if (newParent) {
+
+                cloned.parent = newParent;
+
+            }
+            return cloned;
+
+        }
+
+        _clone() {
+
+            const cloned = new this.constructor(this.name, this.getScene());
+            cloned.copy(this, true);
+            return cloned;
 
         }
 
@@ -57,9 +116,9 @@
 
     class URDFCollider extends URDFBase {
 
-        constructor(...args) {
+        constructor(name = '', scene = null) {
 
-            super(...args);
+            super(name, scene);
             this.isURDFCollider = true;
             this.type = 'URDFCollider';
 
@@ -69,9 +128,9 @@
 
     class URDFVisual extends URDFBase {
 
-        constructor(...args) {
+        constructor(name = '', scene = null) {
 
-            super(...args);
+            super(name, scene);
             this.isURDFVisual = true;
             this.type = 'URDFVisual';
 
@@ -81,9 +140,9 @@
 
     class URDFLink extends URDFBase {
 
-        constructor(...args) {
+        constructor(name = '', scene = null) {
 
-            super(...args);
+            super(name, scene);
             this.isURDFLink = true;
             this.type = 'URDFLink';
 
@@ -103,7 +162,6 @@
 
             if (this.jointType === v) return;
             this._jointType = v;
-            this.matrixWorldNeedsUpdate = true;
             switch (v) {
 
                 case 'fixed':
@@ -119,7 +177,7 @@
                 case 'planar':
                     // Planar joints are, 3dof: position XY and rotation Z.
                     this.jointValue = new Array(3).fill(0);
-                    this.axis = new THREE.Vector3(0, 0, 1);
+                    this.axis = new core.Vector3(0, 0, 1);
                     break;
 
                 case 'floating':
@@ -136,16 +194,16 @@
 
         }
 
-        constructor(...args) {
+        constructor(name = '', scene = null) {
 
-            super(...args);
+            super(name, scene);
 
             this.isURDFJoint = true;
             this.type = 'URDFJoint';
 
             this.jointValue = null;
             this.jointType = 'fixed';
-            this.axis = new THREE.Vector3(1, 0, 0);
+            this.axis = new core.Vector3(1, 0, 0);
             this.limit = { lower: 0, upper: 0 };
             this.ignoreLimits = false;
 
@@ -191,7 +249,7 @@
             if (!this.origPosition || !this.origQuaternion) {
 
                 this.origPosition = this.position.clone();
-                this.origQuaternion = this.quaternion.clone();
+                this.origQuaternion = this.rotationQuaternion.clone();
 
             }
 
@@ -224,14 +282,16 @@
 
                     }
 
-                    this.quaternion
-                        .setFromAxisAngle(this.axis, angle)
-                        .premultiply(this.origQuaternion);
+                    // Three.js: this.quaternion.setFromAxisAngle(this.axis, angle).premultiply(this.origQuaternion);
+                    // premultiply(q) means result = q * this
+                    // So: result = origQuaternion * RotationAxis(axis, angle)
+                    const rotQuat = core.Quaternion.RotationAxis(this.axis, angle);
+                    this.origQuaternion.multiplyToRef(rotQuat, this.rotationQuaternion);
 
                     if (this.jointValue[0] !== angle) {
 
                         this.jointValue[0] = angle;
-                        this.matrixWorldNeedsUpdate = true;
+                        this.computeWorldMatrix(true);
                         return true;
 
                     } else {
@@ -255,14 +315,17 @@
 
                     }
 
-                    this.position.copy(this.origPosition);
-                    _tempAxis.copy(this.axis).applyEuler(this.rotation);
-                    this.position.addScaledVector(_tempAxis, pos);
+                    this.position.copyFrom(this.origPosition);
+                    // Rotate axis by the original rotation quaternion
+                    const rotMatrix = new core.Matrix();
+                    core.Matrix.FromQuaternionToRef(this.origQuaternion, rotMatrix);
+                    core.Vector3.TransformNormalToRef(this.axis, rotMatrix, _tempAxis);
+                    this.position.addInPlace(_tempAxis.scale(pos));
 
                     if (this.jointValue[0] !== pos) {
 
                         this.jointValue[0] = pos;
-                        this.matrixWorldNeedsUpdate = true;
+                        this.computeWorldMatrix(true);
                         return true;
 
                     } else {
@@ -286,24 +349,33 @@
                     this.jointValue[5] = values[5] !== null ? values[5] : this.jointValue[5];
 
                     // Compose transform of joint origin and transform due to joint values
-                    _tempOrigTransform.compose(this.origPosition, this.origQuaternion, _tempScale);
-                    _tempQuat.setFromEuler(
-                        _tempEuler.set(
-                            this.jointValue[3],
-                            this.jointValue[4],
-                            this.jointValue[5],
-                            'XYZ',
-                        ),
-                    );
+                    // Three.js: Matrix4.compose(pos, quat, scale) -> Babylon: Matrix.Compose(scale, quat, pos)
+                    core.Matrix.ComposeToRef(_tempScale, this.origQuaternion, this.origPosition, _tempOrigMatrix);
+
+                    // Three.js Euler('XYZ') -> compose quaternion from axis rotations
+                    // XYZ intrinsic = Qz * Qy * Qx
+                    const qx = core.Quaternion.RotationAxis(new core.Vector3(1, 0, 0), this.jointValue[3]);
+                    const qy = core.Quaternion.RotationAxis(new core.Vector3(0, 1, 0), this.jointValue[4]);
+                    const qz = core.Quaternion.RotationAxis(new core.Vector3(0, 0, 1), this.jointValue[5]);
+                    // XYZ order: apply X first, then Y, then Z -> qz * qy * qx
+                    qz.multiplyToRef(qy, _tempQuat);
+                    _tempQuat.multiplyToRef(qx, _tempQuat2);
+
                     _tempPosition.set(this.jointValue[0], this.jointValue[1], this.jointValue[2]);
-                    _tempTransform.compose(_tempPosition, _tempQuat, _tempScale);
+                    core.Matrix.ComposeToRef(_tempScale, _tempQuat2, _tempPosition, _tempMatrix);
 
-                    // Calcualte new transform
-                    _tempOrigTransform.premultiply(_tempTransform);
-                    this.position.setFromMatrixPosition(_tempOrigTransform);
-                    this.rotation.setFromRotationMatrix(_tempOrigTransform);
+                    // Three.js: _tempOrigTransform.premultiply(_tempTransform) means _tempTransform * _tempOrigTransform
+                    _tempMatrix.multiplyToRef(_tempOrigMatrix, _tempOrigMatrix);
 
-                    this.matrixWorldNeedsUpdate = true;
+                    // Decompose: Babylon decompose(scale, rotation, translation)
+                    _tempOrigMatrix.decompose(_tempScale, _tempQuat, _tempPosition);
+                    this.position.copyFrom(_tempPosition);
+                    this.rotationQuaternion.copyFrom(_tempQuat);
+
+                    // Reset temp scale
+                    _tempScale.set(1, 1, 1);
+
+                    this.computeWorldMatrix(true);
                     return true;
                 }
 
@@ -317,17 +389,22 @@
                     this.jointValue[2] = values[2] !== null ? values[2] : this.jointValue[2];
 
                     // Compose transform of joint origin and transform due to joint values
-                    _tempOrigTransform.compose(this.origPosition, this.origQuaternion, _tempScale);
-                    _tempQuat.setFromAxisAngle(this.axis, this.jointValue[2]);
+                    core.Matrix.ComposeToRef(_tempScale, this.origQuaternion, this.origPosition, _tempOrigMatrix);
+                    const axisQuat = core.Quaternion.RotationAxis(this.axis, this.jointValue[2]);
                     _tempPosition.set(this.jointValue[0], this.jointValue[1], 0.0);
-                    _tempTransform.compose(_tempPosition, _tempQuat, _tempScale);
+                    core.Matrix.ComposeToRef(_tempScale, axisQuat, _tempPosition, _tempMatrix);
 
-                    // Calculate new transform
-                    _tempOrigTransform.premultiply(_tempTransform);
-                    this.position.setFromMatrixPosition(_tempOrigTransform);
-                    this.rotation.setFromRotationMatrix(_tempOrigTransform);
+                    // Calculate new transform: premultiply means _tempTransform * _tempOrigTransform
+                    _tempMatrix.multiplyToRef(_tempOrigMatrix, _tempOrigMatrix);
 
-                    this.matrixWorldNeedsUpdate = true;
+                    _tempOrigMatrix.decompose(_tempScale, _tempQuat, _tempPosition);
+                    this.position.copyFrom(_tempPosition);
+                    this.rotationQuaternion.copyFrom(_tempQuat);
+
+                    // Reset temp scale
+                    _tempScale.set(1, 1, 1);
+
+                    this.computeWorldMatrix(true);
                     return true;
                 }
 
@@ -341,9 +418,9 @@
 
     class URDFMimicJoint extends URDFJoint {
 
-        constructor(...args) {
+        constructor(name = '', scene = null) {
 
-            super(...args);
+            super(name, scene);
             this.type = 'URDFMimicJoint';
             this.mimicJoint = null;
             this.offset = 0;
@@ -375,9 +452,9 @@
 
     class URDFRobot extends URDFLink {
 
-        constructor(...args) {
+        constructor(name = '', scene = null) {
 
-            super(...args);
+            super(name, scene);
             this.isURDFRobot = true;
             this.urdfNode = null;
 
@@ -490,30 +567,67 @@
 
     }
 
-    /*
-    Reference coordinate frames for THREE.js and ROS.
-    Both coordinate systems are right handed so the URDF is instantiated without
-    frame transforms. The resulting model can be rotated to rectify the proper up,
-    right, and forward directions
+    // Prevent Y/Z axis swap — URDF coordinates should be used as-is in a right-handed scene
+    stlFileLoader_js.STLFileLoader.DO_NOT_ALTER_FILE_COORDINATES = true;
 
-    THREE.js
+    /*
+    Reference coordinate frames for Babylon.js and ROS.
+    Babylon.js is LEFT-handed, ROS/URDF is RIGHT-handed.
+    To handle this, apply scaling (1, 1, -1) on the robot root node
+    (handled in the viewer component).
+
+    Babylon.js
        Y
        |
        |
        .-----X
-     ／
-    Z
+        \
+         Z (into screen, left-handed)
 
-    ROS URDf
+    ROS URDF
            Z
            |   X
-           | ／
+           | /
      Y-----.
 
     */
 
-    const tempQuaternion = new THREE__namespace.Quaternion();
-    const tempEuler = new THREE__namespace.Euler();
+    const tempQuaternion = new core.Quaternion();
+
+    // Simple load tracker replacing THREE.LoadingManager
+    class LoadTracker {
+
+        constructor() {
+
+            this._pending = 0;
+            this.onLoad = null;
+
+        }
+
+        itemStart() {
+
+            this._pending++;
+
+        }
+
+        itemEnd() {
+
+            this._pending--;
+            if (this._pending === 0 && this.onLoad) {
+
+                this.onLoad();
+
+            }
+
+        }
+
+        itemError(url) {
+
+            console.error(`URDFLoader: Failed to load: ${ url }`);
+
+        }
+
+    }
 
     // take a vector "x y z" and process it into
     // an array [x, y, z]
@@ -524,27 +638,44 @@
 
     }
 
-    // applies a rotation a threejs object in URDF order
+    // Extract the base URL from a full URL path
+    function extractUrlBase(url) {
+
+        return url.substring(0, url.lastIndexOf('/') + 1);
+
+    }
+
+    // applies a rotation to a Babylon.js node in URDF order
     function applyRotation(obj, rpy, additive = false) {
 
         // if additive is true the rotation is applied in
         // addition to the existing rotation
-        if (!additive) obj.rotation.set(0, 0, 0);
+        if (!additive) {
 
-        tempEuler.set(rpy[0], rpy[1], rpy[2], 'ZYX');
-        tempQuaternion.setFromEuler(tempEuler);
-        tempQuaternion.multiply(obj.quaternion);
-        obj.quaternion.copy(tempQuaternion);
+            obj.rotationQuaternion = new core.Quaternion();
+
+        }
+
+        // URDF uses ZYX Euler order (intrinsic)
+        // ZYX intrinsic = Qz * Qy * Qx
+        const qx = core.Quaternion.RotationAxis(new core.Vector3(1, 0, 0), rpy[0]);
+        const qy = core.Quaternion.RotationAxis(new core.Vector3(0, 1, 0), rpy[1]);
+        const qz = core.Quaternion.RotationAxis(new core.Vector3(0, 0, 1), rpy[2]);
+        const rpyQuat = qz.multiply(qy).multiply(qx);
+
+        rpyQuat.multiplyToRef(obj.rotationQuaternion, tempQuaternion);
+        obj.rotationQuaternion.copyFrom(tempQuaternion);
 
     }
 
     /* URDFLoader Class */
-    // Loads and reads a URDF file into a THREEjs Object3D format
+    // Loads and reads a URDF file into a Babylon.js TransformNode format
     class URDFLoader {
 
-        constructor(manager) {
+        constructor(scene) {
 
-            this.manager = manager || THREE__namespace.DefaultLoadingManager;
+            this.scene = scene || null;
+            this.manager = new LoadTracker();
             this.loadMeshCb = this.defaultMeshLoader.bind(this);
             this.parseVisual = true;
             this.parseCollision = false;
@@ -569,13 +700,11 @@
         // onComplete:      Callback that is passed the model once loaded
         load(urdf, onComplete, onProgress, onError) {
 
-            // Check if a full URI is specified before
-            // prepending the package info
             const manager = this.manager;
-            const workingPath = THREE__namespace.LoaderUtils.extractUrlBase(urdf);
-            const urdfPath = this.manager.resolveURL(urdf);
+            const workingPath = extractUrlBase(urdf);
+            const urdfPath = urdf;
 
-            manager.itemStart(urdfPath);
+            manager.itemStart();
 
             fetch(urdfPath, this.fetchOptions)
                 .then(res => {
@@ -600,7 +729,7 @@
 
                     const model = this.parse(data, this.workingPath || workingPath);
                     onComplete(model);
-                    manager.itemEnd(urdfPath);
+                    manager.itemEnd();
 
                 })
                 .catch(e => {
@@ -615,7 +744,7 @@
 
                     }
                     manager.itemError(urdfPath);
-                    manager.itemEnd(urdfPath);
+                    manager.itemEnd();
 
                 });
 
@@ -623,11 +752,11 @@
 
         parse(content, workingPath = this.workingPath) {
 
+            const scene = this.scene;
             const packages = this.packages;
             const loadMeshCb = this.loadMeshCb;
             const parseVisual = this.parseVisual;
             const parseCollision = this.parseCollision;
-            const manager = this.manager;
             const linkMap = {};
             const jointMap = {};
             const materialMap = {};
@@ -713,7 +842,7 @@
                 const links = robotNodes.filter(c => c.nodeName.toLowerCase() === 'link');
                 const joints = robotNodes.filter(c => c.nodeName.toLowerCase() === 'joint');
                 const materials = robotNodes.filter(c => c.nodeName.toLowerCase() === 'material');
-                const obj = new URDFRobot();
+                const obj = new URDFRobot('', scene);
 
                 obj.robotName = robot.getAttribute('name');
                 obj.urdfRobotNode = robot;
@@ -808,14 +937,14 @@
                 const mimicTag = children.find(n => n.nodeName.toLowerCase() === 'mimic');
                 if (mimicTag) {
 
-                    obj = new URDFMimicJoint();
+                    obj = new URDFMimicJoint('', scene);
                     obj.mimicJoint = mimicTag.getAttribute('joint');
                     obj.multiplier = parseFloat(mimicTag.getAttribute('multiplier') || 1.0);
                     obj.offset = parseFloat(mimicTag.getAttribute('offset') || 0.0);
 
                 } else {
 
-                    obj = new URDFJoint();
+                    obj = new URDFJoint('', scene);
 
                 }
 
@@ -854,9 +983,9 @@
                     }
                 });
 
-                // Join the links
-                parent.add(obj);
-                obj.add(child);
+                // Join the links - Babylon.js uses child.parent = parentNode
+                obj.parent = parent;
+                child.parent = obj;
                 applyRotation(obj, rpy);
                 obj.position.set(xyz[0], xyz[1], xyz[2]);
 
@@ -866,7 +995,7 @@
                 if (axisNode) {
 
                     const axisXYZ = axisNode.getAttribute('xyz').split(/\s+/g).map(num => parseFloat(num));
-                    obj.axis = new THREE__namespace.Vector3(axisXYZ[0], axisXYZ[1], axisXYZ[2]);
+                    obj.axis = new core.Vector3(axisXYZ[0], axisXYZ[1], axisXYZ[2]);
                     obj.axis.normalize();
 
                 }
@@ -880,7 +1009,7 @@
 
                 if (target === null) {
 
-                    target = new URDFLink();
+                    target = new URDFLink('', scene);
 
                 }
 
@@ -895,7 +1024,7 @@
                     visualNodes.forEach(vn => {
 
                         const v = processLinkElement(vn, materialMap);
-                        target.add(v);
+                        v.parent = target;
 
                         if (vn.hasAttribute('name')) {
 
@@ -916,7 +1045,7 @@
                     collisionNodes.forEach(cn => {
 
                         const c = processLinkElement(cn);
-                        target.add(c);
+                        c.parent = target;
 
                         if (cn.hasAttribute('name')) {
 
@@ -938,7 +1067,7 @@
             function processMaterial(node) {
 
                 const matNodes = [ ...node.children ];
-                const material = new THREE__namespace.MeshPhongMaterial();
+                const material = new core.StandardMaterial(node.getAttribute('name') || '', scene);
 
                 material.name = node.getAttribute('name') || '';
                 matNodes.forEach(n => {
@@ -952,10 +1081,14 @@
                                 .split(/\s/g)
                                 .map(v => parseFloat(v));
 
-                        material.color.setRGB(rgba[0], rgba[1], rgba[2]);
-                        material.opacity = rgba[3];
-                        material.transparent = rgba[3] < 1;
-                        material.depthWrite = !material.transparent;
+                        material.diffuseColor = new core.Color3(rgba[0], rgba[1], rgba[2]);
+                        material.alpha = rgba[3];
+                        if (rgba[3] < 1) {
+
+                            material.transparencyMode = core.Material.MATERIAL_ALPHABLEND;
+                            material.disableDepthWrite = true;
+
+                        }
 
                     } else if (type === 'texture') {
 
@@ -964,10 +1097,8 @@
                         const filename = n.getAttribute('filename');
                         if (filename) {
 
-                            const loader = new THREE__namespace.TextureLoader(manager);
                             const filePath = resolvePath(filename);
-                            material.map = loader.load(filePath);
-                            material.map.colorSpace = THREE__namespace.SRGBColorSpace;
+                            material.diffuseTexture = new core.Texture(filePath, scene);
 
                         }
 
@@ -1002,11 +1133,11 @@
 
                 } else {
 
-                    material = new THREE__namespace.MeshPhongMaterial();
+                    material = new core.StandardMaterial('', scene);
 
                 }
 
-                const group = isCollisionNode ? new URDFCollider() : new URDFVisual();
+                const group = isCollisionNode ? new URDFCollider('', scene) : new URDFVisual('', scene);
                 group.urdfNode = vn;
 
                 children.forEach(n => {
@@ -1027,11 +1158,11 @@
                                 if (scaleAttr) {
 
                                     const scale = processTuple(scaleAttr);
-                                    group.scale.set(scale[0], scale[1], scale[2]);
+                                    group.scaling.set(scale[0], scale[1], scale[2]);
 
                                 }
 
-                                loadMeshCb(filePath, manager, (obj, err) => {
+                                loadMeshCb(filePath, scene, (obj, err) => {
 
                                     if (err) {
 
@@ -1039,18 +1170,20 @@
 
                                     } else if (obj) {
 
-                                        if (obj instanceof THREE__namespace.Mesh) {
+                                        if (obj instanceof core.Mesh) {
 
                                             obj.material = material;
 
                                         }
 
-                                        // We don't expect non identity rotations or positions. In the case of
-                                        // COLLADA files the model might come in with a custom scale for unit
-                                        // conversion.
+                                        // We don't expect non identity rotations or positions.
                                         obj.position.set(0, 0, 0);
-                                        obj.quaternion.identity();
-                                        group.add(obj);
+                                        if (obj.rotationQuaternion) {
+
+                                            obj.rotationQuaternion.copyFrom(core.Quaternion.Identity());
+
+                                        }
+                                        obj.parent = group;
 
                                     }
 
@@ -1060,38 +1193,38 @@
 
                         } else if (geoType === 'box') {
 
-                            const primitiveModel = new THREE__namespace.Mesh();
-                            primitiveModel.geometry = new THREE__namespace.BoxGeometry(1, 1, 1);
+                            const primitiveModel = core.MeshBuilder.CreateBox('box', { size: 1 }, scene);
                             primitiveModel.material = material;
 
                             const size = processTuple(n.children[0].getAttribute('size'));
-                            primitiveModel.scale.set(size[0], size[1], size[2]);
+                            primitiveModel.scaling.set(size[0], size[1], size[2]);
 
-                            group.add(primitiveModel);
+                            primitiveModel.parent = group;
 
                         } else if (geoType === 'sphere') {
 
-                            const primitiveModel = new THREE__namespace.Mesh();
-                            primitiveModel.geometry = new THREE__namespace.SphereGeometry(1, 30, 30);
+                            const primitiveModel = core.MeshBuilder.CreateSphere('sphere', { diameter: 2, segments: 30 }, scene);
                             primitiveModel.material = material;
 
                             const radius = parseFloat(n.children[0].getAttribute('radius')) || 0;
-                            primitiveModel.scale.set(radius, radius, radius);
+                            primitiveModel.scaling.set(radius, radius, radius);
 
-                            group.add(primitiveModel);
+                            primitiveModel.parent = group;
 
                         } else if (geoType === 'cylinder') {
 
-                            const primitiveModel = new THREE__namespace.Mesh();
-                            primitiveModel.geometry = new THREE__namespace.CylinderGeometry(1, 1, 1, 30);
+                            const primitiveModel = core.MeshBuilder.CreateCylinder('cylinder', { diameter: 2, height: 1, tessellation: 30 }, scene);
                             primitiveModel.material = material;
 
                             const radius = parseFloat(n.children[0].getAttribute('radius')) || 0;
                             const length = parseFloat(n.children[0].getAttribute('length')) || 0;
-                            primitiveModel.scale.set(radius, length, radius);
-                            primitiveModel.rotation.set(Math.PI / 2, 0, 0);
+                            // Three.js cylinder is Y-up, Babylon.js cylinder is also Y-up
+                            // Three.js original: scale(radius, length, radius), rotation(PI/2, 0, 0)
+                            // The rotation makes the cylinder lie along the Z axis (URDF convention)
+                            primitiveModel.scaling.set(radius, length, radius);
+                            primitiveModel.rotationQuaternion = core.Quaternion.RotationAxis(new core.Vector3(1, 0, 0), Math.PI / 2);
 
-                            group.add(primitiveModel);
+                            primitiveModel.parent = group;
 
                         }
 
@@ -1101,7 +1234,7 @@
                         const rpy = processTuple(n.getAttribute('rpy'));
 
                         group.position.set(xyz[0], xyz[1], xyz[2]);
-                        group.rotation.set(0, 0, 0);
+                        group.rotationQuaternion = new core.Quaternion();
                         applyRotation(group, rpy);
 
                     }
@@ -1117,20 +1250,76 @@
         }
 
         // Default mesh loading function
-        defaultMeshLoader(path, manager, done) {
+        defaultMeshLoader(path, scene, done) {
 
             if (/\.stl$/i.test(path)) {
 
-                const loader = new STLLoader_js.STLLoader(manager);
-                loader.load(path, geom => {
-                    const mesh = new THREE__namespace.Mesh(geom, new THREE__namespace.MeshPhongMaterial());
-                    done(mesh);
+                const rootUrl = path.substring(0, path.lastIndexOf('/') + 1);
+                const fileName = path.substring(path.lastIndexOf('/') + 1);
+
+                core.SceneLoader.ImportMesh('', rootUrl, fileName, scene, (meshes) => {
+
+                    if (meshes.length > 0) {
+
+                        // If multiple meshes, create a parent node
+                        if (meshes.length === 1) {
+
+                            const mesh = meshes[0];
+                            mesh.material = new core.StandardMaterial('stl-material', scene);
+                            done(mesh);
+
+                        } else {
+
+                            const parent = new (core.Mesh.bind(core.Mesh, 'stl-root', scene))();
+                            meshes.forEach(m => {
+
+                                m.material = new core.StandardMaterial('stl-material', scene);
+                                m.parent = parent;
+
+                            });
+                            done(parent);
+
+                        }
+
+                    }
+
+                }, null, (scene, message, exception) => {
+
+                    console.warn(`URDFLoader: Could not load STL at ${ path }.`, message);
+                    done(null, exception || new Error(message));
+
+                });
+
+            } else if (/\.(glb|gltf)$/i.test(path)) {
+
+                const rootUrl = path.substring(0, path.lastIndexOf('/') + 1);
+                const fileName = path.substring(path.lastIndexOf('/') + 1);
+
+                core.SceneLoader.ImportMesh('', rootUrl, fileName, scene, (meshes) => {
+
+                    if (meshes.length === 1) {
+
+                        done(meshes[0]);
+
+                    } else if (meshes.length > 1) {
+
+                        const parent = new (core.Mesh.bind(core.Mesh, 'gltf-root', scene))();
+                        meshes.forEach(m => { m.parent = parent; });
+                        done(parent);
+
+                    }
+
+                }, null, (scene, message, exception) => {
+
+                    console.warn(`URDFLoader: Could not load glTF at ${ path }.`, message);
+                    done(null, exception || new Error(message));
+
                 });
 
             } else if (/\.dae$/i.test(path)) {
 
-                const loader = new ColladaLoader_js.ColladaLoader(manager);
-                loader.load(path, dae => done(dae.scene));
+                console.warn(`URDFLoader: DAE/COLLADA files are not supported in Babylon.js. Please convert to glTF: ${ path }`);
+                done(null, new Error('DAE files not supported. Convert to glTF.'));
 
             } else {
 
@@ -1140,7 +1329,7 @@
 
         }
 
-    };
+    }
 
     return URDFLoader;
 

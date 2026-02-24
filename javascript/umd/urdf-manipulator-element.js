@@ -1,38 +1,15 @@
 (function (global, factory) {
-    typeof exports === 'object' && typeof module !== 'undefined' ? module.exports = factory(require('three'), require('./urdf-viewer-element.js')) :
-    typeof define === 'function' && define.amd ? define(['three', './urdf-viewer-element'], factory) :
-    (global = typeof globalThis !== 'undefined' ? globalThis : global || self, global.URDFManipulator = factory(global.THREE, global.URDFViewer));
-})(this, (function (THREE, URDFViewer) { 'use strict';
-
-    function _interopDefaultLegacy (e) { return e && typeof e === 'object' && 'default' in e ? e : { 'default': e }; }
-
-    function _interopNamespace(e) {
-        if (e && e.__esModule) return e;
-        var n = Object.create(null);
-        if (e) {
-            Object.keys(e).forEach(function (k) {
-                if (k !== 'default') {
-                    var d = Object.getOwnPropertyDescriptor(e, k);
-                    Object.defineProperty(n, k, d.get ? d : {
-                        enumerable: true,
-                        get: function () { return e[k]; }
-                    });
-                }
-            });
-        }
-        n["default"] = e;
-        return Object.freeze(n);
-    }
-
-    var THREE__namespace = /*#__PURE__*/_interopNamespace(THREE);
-    var URDFViewer__default = /*#__PURE__*/_interopDefaultLegacy(URDFViewer);
+    typeof exports === 'object' && typeof module !== 'undefined' ? module.exports = factory(require('@babylonjs/core'), require('./urdf-viewer-element.js')) :
+    typeof define === 'function' && define.amd ? define(['@babylonjs/core', './urdf-viewer-element'], factory) :
+    (global = typeof globalThis !== 'undefined' ? globalThis : global || self, global.URDFManipulator = factory(global.BABYLON, global.URDFViewer));
+})(this, (function (core, URDFViewer) { 'use strict';
 
     // Find the nearest parent that is a joint
     function isJoint(j) {
 
         return j.isURDFJoint && j.jointType !== 'fixed';
 
-    };
+    }
 
     function findNearestJoint(child) {
 
@@ -51,35 +28,57 @@
 
         return curr;
 
-    };
+    }
 
-    const prevHitPoint = new THREE.Vector3();
-    const newHitPoint = new THREE.Vector3();
-    const pivotPoint = new THREE.Vector3();
-    const tempVector = new THREE.Vector3();
-    const tempVector2 = new THREE.Vector3();
-    const projectedStartPoint = new THREE.Vector3();
-    const projectedEndPoint = new THREE.Vector3();
-    const plane = new THREE.Plane();
+    // Project a point onto a plane defined by normal and d (ax + by + cz + d = 0)
+    function projectPointOnPlane(planeNormal, planeD, point) {
+
+        const dist = core.Vector3.Dot(planeNormal, point) + planeD;
+        return point.subtract(planeNormal.scale(dist));
+
+    }
+
+    const prevHitPoint = new core.Vector3();
+    const newHitPoint = new core.Vector3();
+    const pivotPoint = new core.Vector3();
+    const tempVector = new core.Vector3();
+    const tempVector2 = new core.Vector3();
+    const projectedStartPoint = new core.Vector3();
+    const projectedEndPoint = new core.Vector3();
+
+    // Simple plane representation: normal + d (ax + by + cz + d = 0)
+    let planeNormal = new core.Vector3();
+    let planeD = 0;
+
+    function setPlaneFromNormalAndPoint(normal, point) {
+
+        planeNormal = normal.clone();
+        planeD = -core.Vector3.Dot(normal, point);
+
+    }
+
     class URDFDragControls {
 
         constructor(scene) {
 
             this.enabled = true;
             this.scene = scene;
-            this.raycaster = new THREE.Raycaster();
-            this.initialGrabPoint = new THREE.Vector3();
+            this.ray = new core.Ray(core.Vector3.Zero(), core.Vector3.Forward());
+            this.initialGrabPoint = new core.Vector3();
 
             this.hitDistance = -1;
             this.hovered = null;
             this.manipulating = null;
+
+            // Babylon scene for picking
+            this.babylonScene = null;
 
         }
 
         update() {
 
             const {
-                raycaster,
+                ray,
                 hovered,
                 manipulating,
                 scene,
@@ -92,13 +91,31 @@
             }
 
             let hoveredJoint = null;
-            const intersections = raycaster.intersectObject(scene, true);
-            if (intersections.length !== 0) {
 
-                const hit = intersections[0];
-                this.hitDistance = hit.distance;
-                hoveredJoint = findNearestJoint(hit.object);
-                this.initialGrabPoint.copy(hit.point);
+            // Use Babylon.js scene picking with the ray
+            if (this.babylonScene) {
+
+                const pickResult = this.babylonScene.pickWithRay(ray, (mesh) => {
+
+                    // Check if this mesh is a descendant of the scene (URDF robot)
+                    let parent = mesh;
+                    while (parent) {
+
+                        if (parent === scene) return true;
+                        parent = parent.parent;
+
+                    }
+                    return false;
+
+                });
+
+                if (pickResult && pickResult.hit) {
+
+                    this.hitDistance = pickResult.distance;
+                    hoveredJoint = findNearestJoint(pickResult.pickedMesh);
+                    this.initialGrabPoint.copyFrom(pickResult.pickedPoint);
+
+                }
 
             }
 
@@ -147,53 +164,61 @@
         getRevoluteDelta(joint, startPoint, endPoint) {
 
             // set up the plane
-            tempVector
-                .copy(joint.axis)
-                .transformDirection(joint.matrixWorld)
-                .normalize();
-            pivotPoint
-                .set(0, 0, 0)
-                .applyMatrix4(joint.matrixWorld);
-            plane
-                .setFromNormalAndCoplanarPoint(tempVector, pivotPoint);
+            // Transform joint axis to world space
+            const worldMatrix = joint.getWorldMatrix();
+            core.Vector3.TransformNormalToRef(joint.axis, worldMatrix, tempVector);
+            tempVector.normalize();
+
+            // Get pivot point (joint origin in world space)
+            core.Vector3.TransformCoordinatesToRef(core.Vector3.Zero(), worldMatrix, pivotPoint);
+
+            setPlaneFromNormalAndPoint(tempVector, pivotPoint);
 
             // project the drag points onto the plane
-            plane.projectPoint(startPoint, projectedStartPoint);
-            plane.projectPoint(endPoint, projectedEndPoint);
+            const pStart = projectPointOnPlane(planeNormal, planeD, startPoint);
+            projectedStartPoint.copyFrom(pStart);
+            const pEnd = projectPointOnPlane(planeNormal, planeD, endPoint);
+            projectedEndPoint.copyFrom(pEnd);
 
             // get the directions relative to the pivot
-            projectedStartPoint.sub(pivotPoint);
-            projectedEndPoint.sub(pivotPoint);
+            projectedStartPoint.subtractInPlace(pivotPoint);
+            projectedEndPoint.subtractInPlace(pivotPoint);
 
-            tempVector.crossVectors(projectedStartPoint, projectedEndPoint);
+            const cross = core.Vector3.Cross(projectedStartPoint, projectedEndPoint);
 
-            const direction = Math.sign(tempVector.dot(plane.normal));
-            return direction * projectedEndPoint.angleTo(projectedStartPoint);
+            const direction = Math.sign(core.Vector3.Dot(cross, planeNormal));
+            const startNorm = projectedStartPoint.length();
+            const endNorm = projectedEndPoint.length();
+            if (startNorm === 0 || endNorm === 0) return 0;
+
+            const cosAngle = core.Vector3.Dot(projectedStartPoint.normalize(), projectedEndPoint.normalize());
+            return direction * Math.acos(Math.max(-1, Math.min(1, cosAngle)));
 
         }
 
         getPrismaticDelta(joint, startPoint, endPoint) {
 
-            tempVector.subVectors(endPoint, startPoint);
-            plane
-                .normal
-                .copy(joint.axis)
-                .transformDirection(joint.parent.matrixWorld)
-                .normalize();
+            tempVector.copyFrom(endPoint).subtractInPlace(startPoint);
 
-            return tempVector.dot(plane.normal);
+            // Transform joint axis to parent world space
+            const parentWorldMatrix = joint.parent ? joint.parent.getWorldMatrix() : core.Matrix.Identity();
+            const axisWorld = new core.Vector3();
+            core.Vector3.TransformNormalToRef(joint.axis, parentWorldMatrix, axisWorld);
+            axisWorld.normalize();
+
+            return core.Vector3.Dot(tempVector, axisWorld);
 
         }
 
         moveRay(toRay) {
 
-            const { raycaster, hitDistance, manipulating } = this;
-            const { ray } = raycaster;
+            const { ray, hitDistance, manipulating } = this;
 
             if (manipulating) {
 
-                ray.at(hitDistance, prevHitPoint);
-                toRay.at(hitDistance, newHitPoint);
+                // ray.at(hitDistance) = ray.origin + ray.direction * hitDistance
+                ray.origin.addToRef(ray.direction.scale(hitDistance), prevHitPoint);
+                toRay.origin.addToRef(toRay.direction.scale(hitDistance), newHitPoint);
 
                 let delta = 0;
                 if (manipulating.jointType === 'revolute' || manipulating.jointType === 'continuous') {
@@ -214,7 +239,8 @@
 
             }
 
-            this.raycaster.ray.copy(toRay);
+            this.ray.origin.copyFrom(toRay.origin);
+            this.ray.direction.copyFrom(toRay.direction);
             this.update();
 
         }
@@ -252,45 +278,56 @@
 
     class PointerURDFDragControls extends URDFDragControls {
 
-        constructor(scene, camera, domElement) {
+        constructor(scene, babylonScene, camera, domElement) {
 
             super(scene);
+            this.babylonScene = babylonScene;
             this.camera = camera;
             this.domElement = domElement;
 
-            const raycaster = new THREE.Raycaster();
-            const mouse = new THREE.Vector2();
+            const self = this;
 
-            function updateMouse(e) {
+            function updateRayFromMouse(e) {
 
-                mouse.x = ((e.pageX - domElement.offsetLeft) / domElement.offsetWidth) * 2 - 1;
-                mouse.y = -((e.pageY - domElement.offsetTop) / domElement.offsetHeight) * 2 + 1;
+                const rect = domElement.getBoundingClientRect();
+                const x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+                const y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+
+                // Convert to Babylon.js viewport coordinates (0 to width, 0 to height)
+                const viewportX = (x + 1) / 2 * rect.width;
+                const viewportY = (1 - y) / 2 * rect.height;
+
+                // Create picking ray from camera through the screen point
+                const pickRay = babylonScene.createPickingRay(
+                    viewportX, viewportY,
+                    core.Matrix.Identity(),
+                    camera,
+                );
+
+                return pickRay;
 
             }
 
             this._mouseDown = e => {
 
-                updateMouse(e);
-                raycaster.setFromCamera(mouse, this.camera);
-                this.moveRay(raycaster.ray);
-                this.setGrabbed(true);
+                const pickRay = updateRayFromMouse(e);
+                self.moveRay(pickRay);
+                self.setGrabbed(true);
 
             };
 
             this._mouseMove = e => {
 
-                updateMouse(e);
-                raycaster.setFromCamera(mouse, this.camera);
-                this.moveRay(raycaster.ray);
+                const pickRay = updateRayFromMouse(e);
+                self.moveRay(pickRay);
 
             };
 
             this._mouseUp = e => {
 
-                updateMouse(e);
-                raycaster.setFromCamera(mouse, this.camera);
-                this.moveRay(raycaster.ray);
-                this.setGrabbed(false);
+                const pickRay = updateRayFromMouse(e);
+                self.moveRay(pickRay);
+                self.setGrabbed(false);
 
             };
 
@@ -305,40 +342,36 @@
             const { camera, initialGrabPoint } = this;
 
             // set up the plane
-            tempVector
-                .copy(joint.axis)
-                .transformDirection(joint.matrixWorld)
-                .normalize();
-            pivotPoint
-                .set(0, 0, 0)
-                .applyMatrix4(joint.matrixWorld);
-            plane
-                .setFromNormalAndCoplanarPoint(tempVector, pivotPoint);
+            const worldMatrix = joint.getWorldMatrix();
+            core.Vector3.TransformNormalToRef(joint.axis, worldMatrix, tempVector);
+            tempVector.normalize();
 
-            tempVector
-                .copy(camera.position)
-                .sub(initialGrabPoint)
-                .normalize();
+            core.Vector3.TransformCoordinatesToRef(core.Vector3.Zero(), worldMatrix, pivotPoint);
+
+            setPlaneFromNormalAndPoint(tempVector, pivotPoint);
+
+            const cameraDir = camera.position.subtract(initialGrabPoint).normalize();
 
             // if looking into the plane of rotation
-            if (Math.abs(tempVector.dot(plane.normal)) > 0.3) {
+            if (Math.abs(core.Vector3.Dot(cameraDir, planeNormal)) > 0.3) {
 
                 return super.getRevoluteDelta(joint, startPoint, endPoint);
 
             } else {
 
-                // get the up direction
-                tempVector.set(0, 1, 0).transformDirection(camera.matrixWorld);
+                // get the up direction from camera world matrix
+                const cameraWorldMatrix = camera.getWorldMatrix();
+                core.Vector3.TransformNormalToRef(new core.Vector3(0, 1, 0), cameraWorldMatrix, tempVector);
 
                 // get points projected onto the plane of rotation
-                plane.projectPoint(startPoint, projectedStartPoint);
-                plane.projectPoint(endPoint, projectedEndPoint);
+                projectedStartPoint.copyFrom(projectPointOnPlane(planeNormal, planeD, startPoint));
+                projectedEndPoint.copyFrom(projectPointOnPlane(planeNormal, planeD, endPoint));
 
-                tempVector.set(0, 0, -1).transformDirection(camera.matrixWorld);
-                tempVector.cross(plane.normal);
-                tempVector2.subVectors(endPoint, startPoint);
+                core.Vector3.TransformNormalToRef(new core.Vector3(0, 0, -1), cameraWorldMatrix, tempVector);
+                const cross = core.Vector3.Cross(tempVector, planeNormal);
+                tempVector2.copyFrom(endPoint).subtractInPlace(startPoint);
 
-                return tempVector.dot(tempVector2);
+                return core.Vector3.Dot(cross, tempVector2);
 
             }
 
@@ -363,7 +396,7 @@
     // joint-mouseout: Fired when a joint is no longer hovered over
     // manipulate-start: Fires when a joint is manipulated
     // manipulate-end: Fires when a joint is done being manipulated
-    class URDFManipulator extends URDFViewer__default["default"] {
+    class URDFManipulator extends URDFViewer {
 
         static get observedAttributes() {
 
@@ -382,13 +415,11 @@
             super(...args);
 
             // The highlight material
-            this.highlightMaterial =
-                new THREE__namespace.MeshPhongMaterial({
-                    shininess: 10,
-                    color: this.highlightColor,
-                    emissive: this.highlightColor,
-                    emissiveIntensity: 0.25,
-                });
+            this.highlightMaterial = new core.StandardMaterial('highlightMat', this.scene);
+            const hlColor = this._parseColor(this.highlightColor);
+            this.highlightMaterial.diffuseColor = hlColor;
+            this.highlightMaterial.emissiveColor = hlColor.scale(0.25);
+            this.highlightMaterial.specularPower = 10;
 
             const isJoint = j => {
 
@@ -402,7 +433,7 @@
                 const traverse = c => {
 
                     // Set or revert the highlight color
-                    if (c.type === 'Mesh') {
+                    if (c instanceof core.Mesh) {
 
                         if (revert) {
 
@@ -422,12 +453,13 @@
                     // another joint
                     if (c === m || !isJoint(c)) {
 
-                        for (let i = 0; i < c.children.length; i++) {
+                        const children = c.getChildren ? c.getChildren() : [];
+                        for (let i = 0; i < children.length; i++) {
 
-                            const child = c.children[i];
+                            const child = children[i];
                             if (!child.isURDFCollider) {
 
-                                traverse(c.children[i]);
+                                traverse(child);
 
                             }
 
@@ -441,20 +473,20 @@
 
             };
 
-            const el = this.renderer.domElement;
+            const el = this._canvas;
 
-            const dragControls = new PointerURDFDragControls(this.scene, this.camera, el);
+            const dragControls = new PointerURDFDragControls(this.scene, this.babylonScene, this.camera, el);
             dragControls.onDragStart = joint => {
 
                 this.dispatchEvent(new CustomEvent('manipulate-start', { bubbles: true, cancelable: true, detail: joint.name }));
-                this.controls.enabled = false;
+                this.camera.detachControl();
                 this.redraw();
 
             };
             dragControls.onDragEnd = joint => {
 
                 this.dispatchEvent(new CustomEvent('manipulate-end', { bubbles: true, cancelable: true, detail: joint.name }));
-                this.controls.enabled = true;
+                this.camera.attachControl(this._canvas, true);
                 this.redraw();
 
             };
@@ -495,16 +527,20 @@
 
             switch (attr) {
 
-                case 'highlight-color':
-                    this.highlightMaterial.color.set(this.highlightColor);
-                    this.highlightMaterial.emissive.set(this.highlightColor);
+                case 'highlight-color': {
+
+                    const hlColor = this._parseColor(this.highlightColor);
+                    this.highlightMaterial.diffuseColor = hlColor;
+                    this.highlightMaterial.emissiveColor = hlColor.scale(0.25);
                     break;
+
+                }
 
             }
 
         }
 
-    };
+    }
 
     return URDFManipulator;
 

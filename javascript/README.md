@@ -1,17 +1,16 @@
-# urdf-loader
+# urdf-loader-babylonjs
 
-[![npm version](https://img.shields.io/npm/v/urdf-loader.svg?style=flat-square)](https://www.npmjs.com/package/urdf-loader)
-[![build](https://img.shields.io/github/actions/workflow/status/gkjohnson/urdf-loaders/node.js.yml?style=flat-square&label=build&branch=master)](https://github.com/gkjohnson/urdf-loaders/actions)
+Utilities for loading URDF files into Babylon.js and a Web Component that loads and renders the model.
 
-Utilities for loading URDF files into THREE.js and a Web Component that loads and renders the model.
-
-[Basic loader example here!](https://gkjohnson.github.io/urdf-loaders/javascript/example/bundle/simple.html)
-
-[VR example here!](https://gkjohnson.github.io/urdf-loaders/javascript/example/bundle/vr.html)
-
-[Drag and drop web component tool here!](https://gkjohnson.github.io/urdf-loaders/javascript/example/bundle/index.html)
+Based on [urdf-loaders](https://github.com/gkjohnson/urdf-loaders) by gkjohnson, ported from Three.js to Babylon.js.
 
 ![Example](/javascript/docs/javascript-example.gif)
+
+# Installation
+
+```bash
+npm install urdf-loader-babylonjs @babylonjs/core @babylonjs/loaders
+```
 
 # Use
 
@@ -20,13 +19,12 @@ Utilities for loading URDF files into THREE.js and a Web Component that loads an
 Loading a URDF file from a server.
 
 ```js
-import { LoadingManager } from 'three';
-import URDFLoader from 'urdf-loader';
+import { Engine, Scene } from '@babylonjs/core';
+import URDFLoader from 'urdf-loader-babylonjs';
 
-// ...init three.js scene...
+// ...init Babylon.js scene...
 
-const manager = new LoadingManager();
-const loader = new URDFLoader( manager );
+const loader = new URDFLoader( scene );
 loader.packages = {
     packageName : './package/dir/'            // The equivalent of a (list of) ROS package(s):// directory
 };
@@ -35,7 +33,7 @@ loader.load(
   robot => {
 
     // The robot is loaded!
-    scene.add( robot );
+    robot.parent = scene.getTransformNodeByName('rootNode');
 
   }
 );
@@ -46,37 +44,39 @@ loader.load(
 Implementing custom error handling and / or adding a custom loader for meshes can be done using the [loadMeshCb](#loadMeshCb) callback.
 
 ```js
-import { GLTFLoader } from 'three/examples/loaders/GLTFLoader.js';
-import URDFLoader from 'urdf-loader';
+import { SceneLoader, Mesh } from '@babylonjs/core';
+import '@babylonjs/loaders/glTF';
+import URDFLoader from 'urdf-loader-babylonjs';
 
-// ...init three.js scene...
+// ...init Babylon.js scene...
 
-const loader = new URDFLoader();
-loader.loadMeshCb = function( path, manager, onComplete ) {
+const loader = new URDFLoader( scene );
+loader.loadMeshCb = function( path, scene, onComplete ) {
 
-    const gltfLoader = new GLTFLoader( manager );
-    gltfLoader.load(
-        path,
-        result => {
+    const rootUrl = path.substring(0, path.lastIndexOf('/') + 1);
+    const fileName = path.substring(path.lastIndexOf('/') + 1);
 
-            onComplete( result.scene );
+    SceneLoader.ImportMesh('', rootUrl, fileName, scene, (meshes) => {
 
-        },
-        undefined,
-        err => {
-        
-            // try to load again, notify user, etc
-        
-            onComplete( null, err );
-        
+        if (meshes.length === 1) onComplete(meshes[0]);
+        else {
+            const parent = new Mesh('root', scene);
+            meshes.forEach(m => { m.parent = parent; });
+            onComplete(parent);
         }
-    );
+
+    }, null, (scene, message, err) => {
+
+        // try to load again, notify user, etc
+        onComplete( null, err || new Error(message) );
+
+    });
 
 };
 loader.load( 'T12/urdf/T12.URDF', robot => {
 
     // The robot is loaded!
-    scene.add( robot );
+    robot.parent = someParentNode;
 
 } );
 
@@ -87,21 +87,20 @@ loader.load( 'T12/urdf/T12.URDF', robot => {
 Using [XacroParser](https://github.com/gkjohnson/xacro-parser) to process a Xacro URDF file and then parse it.
 
 ```js
-import { LoaderUtils } from 'three';
 import { XacroLoader } from 'xacro-parser';
-import URDFLoader from 'urdf-loader';
+import URDFLoader from 'urdf-loader-babylonjs';
 
-// ...init three.js scene...
+// ...init Babylon.js scene...
 
 const url = './path/to/file.xacro';
 const xacroLoader = new XacroLoader();
 xacroLoader.load( url, xml => {
 
-    const urdfLoader = new URDFLoader();
-    urdfLoader.workingPath = LoaderUtils.extractUrlBase( url );
+    const urdfLoader = new URDFLoader( scene );
+    urdfLoader.workingPath = url.substring(0, url.lastIndexOf('/') + 1);
 
     const robot = urdfLoader.parse( xml );
-    scene.add( robot );
+    robot.parent = someParentNode;
 
 } );
 ```
@@ -115,6 +114,14 @@ robot.setJointValue( jointName, jointAngle );
 
 robot.joints[ jointName ].setJointValue( jointAngle );
 ```
+
+### Coordinate System
+
+URDF/ROS uses a right-handed coordinate system while Babylon.js uses a left-handed system. When using the `<urdf-viewer>` web component, this is handled automatically via a root transform. When using `URDFLoader.parse()` directly, you may need to apply a root transform yourself (e.g., `robot.scaling = new Vector3(1, 1, -1)` or rotate to match your scene's conventions).
+
+### DAE/COLLADA Support
+
+DAE (COLLADA) files are not supported in the Babylon.js port. If your URDF references `.dae` meshes, convert them to glTF/GLB format. STL and glTF/GLB are fully supported.
 
 # API
 
@@ -149,8 +156,8 @@ If the setting is set to a function then it takes the package name and is expect
 loadMeshCb = null :
     (
         pathToModel : string,
-        manager : LoadingManager,
-        onComplete : ( obj : Object3D, err ?: Error ) => void
+        scene : Scene,
+        onComplete : ( obj : TransformNode, err ?: Error ) => void
     ) => void
 ```
 
@@ -158,7 +165,7 @@ An optional function that can be used to override the default mesh loading funct
 
 `pathToModel` is the url to load the model from.
 
-`manager` is the THREE.js `LoadingManager` used by the `URDFLoader`.
+`scene` is the Babylon.js `Scene` instance.
 
 `onComplete` is called with the mesh once the geometry has been loaded.
 
@@ -201,10 +208,10 @@ An optional value that can be used to enable / disable loading meshes for links 
 ### .constructor
 
 ```js
-constructor( manager : LoadingManager )
+constructor( scene : Scene )
 ```
 
-Constructor. Manager is used for transforming load URLs and tracking downloads.
+Constructor. Scene is the Babylon.js scene that nodes will be created in.
 
 ### .load
 
@@ -217,7 +224,7 @@ load(
 ) : void
 ```
 
-Loads and builds the specified URDF robot in THREE.js.
+Loads and builds the specified URDF robot in Babylon.js.
 
 Takes a path to load the urdf file from, a func to call when the robot has loaded, and a set of options.
 
@@ -243,7 +250,7 @@ Note that geometry will not necessarily be loaded when the robot is returned.
 
 ## URDFJoint
 
-_extends Object3D_
+_extends TransformNode_
 
 An object representing a robot joint.
 
@@ -347,7 +354,7 @@ Specifies the multiplicative factor in the formula above. Defaults to 1.0.
 
 ## URDFLink
 
-_extends Object3D_
+_extends TransformNode_
 
 ### .name
 
@@ -390,23 +397,23 @@ A dictionary of `jointName : URDFJoint` with all joints in the robot.
 ### .colliders
 
 ```js
-colliders : { [key] : Object3D }
+colliders : { [key] : TransformNode }
 ```
 
-A dictionary of `colliderName : Object3D` with all collision nodes in the robot.
+A dictionary of `colliderName : TransformNode` with all collision nodes in the robot.
 
 ### .visual
 
 ```js
-visual : { [key] : Object3D }
+visual : { [key] : TransformNode }
 ```
 
-A dictionary of `visualName : Object3D` with all visual nodes in the robot.
+A dictionary of `visualName : TransformNode` with all visual nodes in the robot.
 
 ### .frames
 
 ```js
-joints : { [key] : URDFJoint }
+frames : { [key] : TransformNode }
 ```
 
 A dictionary of all the named frames in the robot including links, joints, colliders, and visual.
@@ -477,11 +484,11 @@ The element uses fetch options `{ mode: 'cors', credentials: 'same-origin' }` to
 
 #### ignore-limits
 
-Whether or not hte display should ignore the joint limits specified in the model when updating angles.
+Whether or not the display should ignore the joint limits specified in the model when updating angles.
 
 #### up
 
-The axis to associate with "up" in THREE.js. Values can be [+-][XYZ].
+The axis to associate with "up" in Babylon.js. Values can be [+-][XYZ].
 
 #### display-shadow
 

@@ -1,17 +1,15 @@
 /* globals */
-import * as THREE from 'three';
+import { Color3, Vector3, SceneLoader, Mesh, StandardMaterial } from '@babylonjs/core';
+import { STLFileLoader } from '@babylonjs/loaders/STL/stlFileLoader.js';
+import '@babylonjs/loaders/glTF';
+
+STLFileLoader.DO_NOT_ALTER_FILE_COORDINATES = true;
 import { registerDragEvents } from './dragAndDrop.js';
-import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { ColladaLoader } from 'three/examples/jsm/loaders/ColladaLoader.js';
-import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 import URDFManipulator from '../../src/urdf-manipulator-element.js';
 
 customElements.define('urdf-viewer', URDFManipulator);
 
 // declare these globally for the sake of the example.
-// Hack to make the build work with webpack for now.
-// TODO: Remove this once modules or parcel is being used
 const viewer = document.querySelector('urdf-viewer');
 
 const limitsToggle = document.getElementById('ignore-joint-limits');
@@ -32,7 +30,10 @@ let sliders = {};
 const setColor = color => {
 
     document.body.style.backgroundColor = color;
-    viewer.highlightColor = '#' + (new THREE.Color(0xffffff)).lerp(new THREE.Color(color), 0.35).getHexString();
+    const baseColor = Color3.FromHexString('#ffffff');
+    const targetColor = Color3.FromHexString(color);
+    const blended = Color3.Lerp(baseColor, targetColor, 0.35);
+    viewer.highlightColor = blended.toHexString();
 
 };
 
@@ -238,47 +239,47 @@ viewer.addEventListener('urdf-processed', () => {
 
 document.addEventListener('WebComponentsReady', () => {
 
-    viewer.loadMeshFunc = (path, manager, done) => {
+    viewer.loadMeshFunc = (path, scene, done) => {
 
         const ext = path.split(/\./g).pop().toLowerCase();
+        const rootUrl = path.substring(0, path.lastIndexOf('/') + 1);
+        const fileName = path.substring(path.lastIndexOf('/') + 1);
+
         switch (ext) {
 
             case 'gltf':
             case 'glb':
-                new GLTFLoader(manager).load(
-                    path,
-                    result => done(result.scene),
-                    null,
-                    err => done(null, err),
-                );
+                SceneLoader.ImportMesh('', rootUrl, fileName, scene, (meshes) => {
+
+                    if (meshes.length === 1) done(meshes[0]);
+                    else if (meshes.length > 1) {
+
+                        const parent = new Mesh('gltf-root', scene);
+                        meshes.forEach(m => { m.parent = parent; });
+                        done(parent);
+
+                    }
+
+                }, null, (scene, message, exception) => done(null, exception || new Error(message)));
                 break;
-            case 'obj':
-                new OBJLoader(manager).load(
-                    path,
-                    result => done(result),
-                    null,
-                    err => done(null, err),
-                );
-                break;
-            case 'dae':
-                new ColladaLoader(manager).load(
-                    path,
-                    result => done(result.scene),
-                    null,
-                    err => done(null, err),
-                );
-                break;
+
             case 'stl':
-                new STLLoader(manager).load(
-                    path,
-                    result => {
-                        const material = new THREE.MeshPhongMaterial();
-                        const mesh = new THREE.Mesh(result, material);
+                SceneLoader.ImportMesh('', rootUrl, fileName, scene, (meshes) => {
+
+                    if (meshes.length > 0) {
+
+                        const mesh = meshes[0];
+                        mesh.material = new StandardMaterial('stl-material', scene);
                         done(mesh);
-                    },
-                    null,
-                    err => done(null, err),
-                );
+
+                    }
+
+                }, null, (scene, message, exception) => done(null, exception || new Error(message)));
+                break;
+
+            case 'dae':
+                console.warn('DAE/COLLADA files are not supported in Babylon.js. Convert to glTF.');
+                done(null, new Error('DAE not supported'));
                 break;
 
         }
@@ -328,12 +329,13 @@ const updateAngles = () => {
         const offset = i * Math.PI / 3;
         const ratio = Math.max(0, Math.sin(time + offset));
 
-        viewer.setJointValue(`HP${ i }`, THREE.MathUtils.lerp(30, 0, ratio) * DEG2RAD);
-        viewer.setJointValue(`KP${ i }`, THREE.MathUtils.lerp(90, 150, ratio) * DEG2RAD);
-        viewer.setJointValue(`AP${ i }`, THREE.MathUtils.lerp(-30, -60, ratio) * DEG2RAD);
+        const lerp = (a, b, t) => a + (b - a) * t;
+        viewer.setJointValue(`HP${ i }`, lerp(30, 0, ratio) * DEG2RAD);
+        viewer.setJointValue(`KP${ i }`, lerp(90, 150, ratio) * DEG2RAD);
+        viewer.setJointValue(`AP${ i }`, lerp(-30, -60, ratio) * DEG2RAD);
 
-        viewer.setJointValue(`TC${ i }A`, THREE.MathUtils.lerp(0, 0.065, ratio));
-        viewer.setJointValue(`TC${ i }B`, THREE.MathUtils.lerp(0, 0.065, ratio));
+        viewer.setJointValue(`TC${ i }A`, lerp(0, 0.065, ratio));
+        viewer.setJointValue(`TC${ i }B`, lerp(0, 0.065, ratio));
 
         viewer.setJointValue(`W${ i }`, window.performance.now() * 0.001);
 
@@ -382,6 +384,6 @@ document.addEventListener('WebComponentsReady', () => {
     viewer.addEventListener('manipulate-start', e => animToggle.classList.remove('checked'));
     viewer.addEventListener('urdf-processed', e => updateAngles());
     updateLoop();
-    viewer.camera.position.set(-5.5, 3.5, 5.5);
+    viewer.camera.setPosition(new Vector3(-5.5, 3.5, 5.5));
 
 });

@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import { StandardMaterial, Mesh } from '@babylonjs/core';
 import URDFViewer from './urdf-viewer-element.js';
 import { PointerURDFDragControls } from './URDFDragControls.js';
 
@@ -30,13 +30,11 @@ class URDFManipulator extends URDFViewer {
         super(...args);
 
         // The highlight material
-        this.highlightMaterial =
-            new THREE.MeshPhongMaterial({
-                shininess: 10,
-                color: this.highlightColor,
-                emissive: this.highlightColor,
-                emissiveIntensity: 0.25,
-            });
+        this.highlightMaterial = new StandardMaterial('highlightMat', this.scene);
+        const hlColor = this._parseColor(this.highlightColor);
+        this.highlightMaterial.diffuseColor = hlColor;
+        this.highlightMaterial.emissiveColor = hlColor.scale(0.25);
+        this.highlightMaterial.specularPower = 10;
 
         const isJoint = j => {
 
@@ -50,7 +48,7 @@ class URDFManipulator extends URDFViewer {
             const traverse = c => {
 
                 // Set or revert the highlight color
-                if (c.type === 'Mesh') {
+                if (c instanceof Mesh) {
 
                     if (revert) {
 
@@ -70,12 +68,13 @@ class URDFManipulator extends URDFViewer {
                 // another joint
                 if (c === m || !isJoint(c)) {
 
-                    for (let i = 0; i < c.children.length; i++) {
+                    const children = c.getChildren ? c.getChildren() : [];
+                    for (let i = 0; i < children.length; i++) {
 
-                        const child = c.children[i];
+                        const child = children[i];
                         if (!child.isURDFCollider) {
 
-                            traverse(c.children[i]);
+                            traverse(child);
 
                         }
 
@@ -89,20 +88,20 @@ class URDFManipulator extends URDFViewer {
 
         };
 
-        const el = this.renderer.domElement;
+        const el = this._canvas;
 
-        const dragControls = new PointerURDFDragControls(this.scene, this.camera, el);
+        const dragControls = new PointerURDFDragControls(this.scene, this.babylonScene, this.camera, el);
         dragControls.onDragStart = joint => {
 
             this.dispatchEvent(new CustomEvent('manipulate-start', { bubbles: true, cancelable: true, detail: joint.name }));
-            this.controls.enabled = false;
+            this.camera.detachControl();
             this.redraw();
 
         };
         dragControls.onDragEnd = joint => {
 
             this.dispatchEvent(new CustomEvent('manipulate-end', { bubbles: true, cancelable: true, detail: joint.name }));
-            this.controls.enabled = true;
+            this.camera.attachControl(this._canvas, true);
             this.redraw();
 
         };
@@ -143,13 +142,17 @@ class URDFManipulator extends URDFViewer {
 
         switch (attr) {
 
-            case 'highlight-color':
-                this.highlightMaterial.color.set(this.highlightColor);
-                this.highlightMaterial.emissive.set(this.highlightColor);
+            case 'highlight-color': {
+
+                const hlColor = this._parseColor(this.highlightColor);
+                this.highlightMaterial.diffuseColor = hlColor;
+                this.highlightMaterial.emissiveColor = hlColor.scale(0.25);
                 break;
+
+            }
 
         }
 
     }
 
-};
+}

@@ -1,31 +1,110 @@
-import { Euler, Object3D, Vector3, Quaternion, Matrix4 } from 'three';
+import { TransformNode, Vector3, Quaternion, Matrix } from '@babylonjs/core';
 
 const _tempAxis = new Vector3();
-const _tempEuler = new Euler();
-const _tempTransform = new Matrix4();
-const _tempOrigTransform = new Matrix4();
 const _tempQuat = new Quaternion();
+const _tempQuat2 = new Quaternion();
 const _tempScale = new Vector3(1.0, 1.0, 1.0);
 const _tempPosition = new Vector3();
+const _tempMatrix = new Matrix();
+const _tempOrigMatrix = new Matrix();
 
-class URDFBase extends Object3D {
+class URDFBase extends TransformNode {
 
-    constructor(...args) {
+    constructor(name = '', scene = null) {
 
-        super(...args);
+        super(name, scene);
+        this.rotationQuaternion = new Quaternion();
         this.urdfNode = null;
         this.urdfName = '';
 
     }
 
-    copy(source, recursive) {
+    // Depth-first traverse matching Three.js behavior
+    traverse(callback) {
 
-        super.copy(source, recursive);
+        callback(this);
+        for (const child of this.getChildren()) {
+
+            if (child.traverse) {
+
+                child.traverse(callback);
+
+            } else {
+
+                callback(child);
+
+            }
+
+        }
+
+    }
+
+    copy(source, recursive) {
 
         this.urdfNode = source.urdfNode;
         this.urdfName = source.urdfName;
 
+        this.name = source.name;
+        this.position.copyFrom(source.position);
+        if (source.rotationQuaternion) {
+
+            if (!this.rotationQuaternion) {
+
+                this.rotationQuaternion = new Quaternion();
+
+            }
+            this.rotationQuaternion.copyFrom(source.rotationQuaternion);
+
+        }
+        this.scaling.copyFrom(source.scaling);
+
+        if (recursive) {
+
+            const children = source.getChildren();
+            for (const child of children) {
+
+                let clonedChild;
+                if (child._clone && child instanceof URDFBase) {
+
+                    clonedChild = child._clone();
+
+                } else if (child.clone) {
+
+                    // For non-URDF nodes (e.g., Babylon.js Mesh), use native clone
+                    clonedChild = child.clone(child.name);
+
+                }
+                if (clonedChild) {
+
+                    clonedChild.parent = this;
+
+                }
+
+            }
+
+        }
+
         return this;
+
+    }
+
+    clone(name, newParent) {
+
+        const cloned = this._clone();
+        if (newParent) {
+
+            cloned.parent = newParent;
+
+        }
+        return cloned;
+
+    }
+
+    _clone() {
+
+        const cloned = new this.constructor(this.name, this.getScene());
+        cloned.copy(this, true);
+        return cloned;
 
     }
 
@@ -33,9 +112,9 @@ class URDFBase extends Object3D {
 
 class URDFCollider extends URDFBase {
 
-    constructor(...args) {
+    constructor(name = '', scene = null) {
 
-        super(...args);
+        super(name, scene);
         this.isURDFCollider = true;
         this.type = 'URDFCollider';
 
@@ -45,9 +124,9 @@ class URDFCollider extends URDFBase {
 
 class URDFVisual extends URDFBase {
 
-    constructor(...args) {
+    constructor(name = '', scene = null) {
 
-        super(...args);
+        super(name, scene);
         this.isURDFVisual = true;
         this.type = 'URDFVisual';
 
@@ -57,9 +136,9 @@ class URDFVisual extends URDFBase {
 
 class URDFLink extends URDFBase {
 
-    constructor(...args) {
+    constructor(name = '', scene = null) {
 
-        super(...args);
+        super(name, scene);
         this.isURDFLink = true;
         this.type = 'URDFLink';
 
@@ -79,7 +158,6 @@ class URDFJoint extends URDFBase {
 
         if (this.jointType === v) return;
         this._jointType = v;
-        this.matrixWorldNeedsUpdate = true;
         switch (v) {
 
             case 'fixed':
@@ -112,9 +190,9 @@ class URDFJoint extends URDFBase {
 
     }
 
-    constructor(...args) {
+    constructor(name = '', scene = null) {
 
-        super(...args);
+        super(name, scene);
 
         this.isURDFJoint = true;
         this.type = 'URDFJoint';
@@ -167,7 +245,7 @@ class URDFJoint extends URDFBase {
         if (!this.origPosition || !this.origQuaternion) {
 
             this.origPosition = this.position.clone();
-            this.origQuaternion = this.quaternion.clone();
+            this.origQuaternion = this.rotationQuaternion.clone();
 
         }
 
@@ -200,14 +278,16 @@ class URDFJoint extends URDFBase {
 
                 }
 
-                this.quaternion
-                    .setFromAxisAngle(this.axis, angle)
-                    .premultiply(this.origQuaternion);
+                // Three.js: this.quaternion.setFromAxisAngle(this.axis, angle).premultiply(this.origQuaternion);
+                // premultiply(q) means result = q * this
+                // So: result = origQuaternion * RotationAxis(axis, angle)
+                const rotQuat = Quaternion.RotationAxis(this.axis, angle);
+                this.origQuaternion.multiplyToRef(rotQuat, this.rotationQuaternion);
 
                 if (this.jointValue[0] !== angle) {
 
                     this.jointValue[0] = angle;
-                    this.matrixWorldNeedsUpdate = true;
+                    this.computeWorldMatrix(true);
                     return true;
 
                 } else {
@@ -231,14 +311,17 @@ class URDFJoint extends URDFBase {
 
                 }
 
-                this.position.copy(this.origPosition);
-                _tempAxis.copy(this.axis).applyEuler(this.rotation);
-                this.position.addScaledVector(_tempAxis, pos);
+                this.position.copyFrom(this.origPosition);
+                // Rotate axis by the original rotation quaternion
+                const rotMatrix = new Matrix();
+                Matrix.FromQuaternionToRef(this.origQuaternion, rotMatrix);
+                Vector3.TransformNormalToRef(this.axis, rotMatrix, _tempAxis);
+                this.position.addInPlace(_tempAxis.scale(pos));
 
                 if (this.jointValue[0] !== pos) {
 
                     this.jointValue[0] = pos;
-                    this.matrixWorldNeedsUpdate = true;
+                    this.computeWorldMatrix(true);
                     return true;
 
                 } else {
@@ -262,24 +345,33 @@ class URDFJoint extends URDFBase {
                 this.jointValue[5] = values[5] !== null ? values[5] : this.jointValue[5];
 
                 // Compose transform of joint origin and transform due to joint values
-                _tempOrigTransform.compose(this.origPosition, this.origQuaternion, _tempScale);
-                _tempQuat.setFromEuler(
-                    _tempEuler.set(
-                        this.jointValue[3],
-                        this.jointValue[4],
-                        this.jointValue[5],
-                        'XYZ',
-                    ),
-                );
+                // Three.js: Matrix4.compose(pos, quat, scale) -> Babylon: Matrix.Compose(scale, quat, pos)
+                Matrix.ComposeToRef(_tempScale, this.origQuaternion, this.origPosition, _tempOrigMatrix);
+
+                // Three.js Euler('XYZ') -> compose quaternion from axis rotations
+                // XYZ intrinsic = Qz * Qy * Qx
+                const qx = Quaternion.RotationAxis(new Vector3(1, 0, 0), this.jointValue[3]);
+                const qy = Quaternion.RotationAxis(new Vector3(0, 1, 0), this.jointValue[4]);
+                const qz = Quaternion.RotationAxis(new Vector3(0, 0, 1), this.jointValue[5]);
+                // XYZ order: apply X first, then Y, then Z -> qz * qy * qx
+                qz.multiplyToRef(qy, _tempQuat);
+                _tempQuat.multiplyToRef(qx, _tempQuat2);
+
                 _tempPosition.set(this.jointValue[0], this.jointValue[1], this.jointValue[2]);
-                _tempTransform.compose(_tempPosition, _tempQuat, _tempScale);
+                Matrix.ComposeToRef(_tempScale, _tempQuat2, _tempPosition, _tempMatrix);
 
-                // Calcualte new transform
-                _tempOrigTransform.premultiply(_tempTransform);
-                this.position.setFromMatrixPosition(_tempOrigTransform);
-                this.rotation.setFromRotationMatrix(_tempOrigTransform);
+                // Three.js: _tempOrigTransform.premultiply(_tempTransform) means _tempTransform * _tempOrigTransform
+                _tempMatrix.multiplyToRef(_tempOrigMatrix, _tempOrigMatrix);
 
-                this.matrixWorldNeedsUpdate = true;
+                // Decompose: Babylon decompose(scale, rotation, translation)
+                _tempOrigMatrix.decompose(_tempScale, _tempQuat, _tempPosition);
+                this.position.copyFrom(_tempPosition);
+                this.rotationQuaternion.copyFrom(_tempQuat);
+
+                // Reset temp scale
+                _tempScale.set(1, 1, 1);
+
+                this.computeWorldMatrix(true);
                 return true;
             }
 
@@ -293,17 +385,22 @@ class URDFJoint extends URDFBase {
                 this.jointValue[2] = values[2] !== null ? values[2] : this.jointValue[2];
 
                 // Compose transform of joint origin and transform due to joint values
-                _tempOrigTransform.compose(this.origPosition, this.origQuaternion, _tempScale);
-                _tempQuat.setFromAxisAngle(this.axis, this.jointValue[2]);
+                Matrix.ComposeToRef(_tempScale, this.origQuaternion, this.origPosition, _tempOrigMatrix);
+                const axisQuat = Quaternion.RotationAxis(this.axis, this.jointValue[2]);
                 _tempPosition.set(this.jointValue[0], this.jointValue[1], 0.0);
-                _tempTransform.compose(_tempPosition, _tempQuat, _tempScale);
+                Matrix.ComposeToRef(_tempScale, axisQuat, _tempPosition, _tempMatrix);
 
-                // Calculate new transform
-                _tempOrigTransform.premultiply(_tempTransform);
-                this.position.setFromMatrixPosition(_tempOrigTransform);
-                this.rotation.setFromRotationMatrix(_tempOrigTransform);
+                // Calculate new transform: premultiply means _tempTransform * _tempOrigTransform
+                _tempMatrix.multiplyToRef(_tempOrigMatrix, _tempOrigMatrix);
 
-                this.matrixWorldNeedsUpdate = true;
+                _tempOrigMatrix.decompose(_tempScale, _tempQuat, _tempPosition);
+                this.position.copyFrom(_tempPosition);
+                this.rotationQuaternion.copyFrom(_tempQuat);
+
+                // Reset temp scale
+                _tempScale.set(1, 1, 1);
+
+                this.computeWorldMatrix(true);
                 return true;
             }
 
@@ -317,9 +414,9 @@ class URDFJoint extends URDFBase {
 
 class URDFMimicJoint extends URDFJoint {
 
-    constructor(...args) {
+    constructor(name = '', scene = null) {
 
-        super(...args);
+        super(name, scene);
         this.type = 'URDFMimicJoint';
         this.mimicJoint = null;
         this.offset = 0;
@@ -351,9 +448,9 @@ class URDFMimicJoint extends URDFJoint {
 
 class URDFRobot extends URDFLink {
 
-    constructor(...args) {
+    constructor(name = '', scene = null) {
 
-        super(...args);
+        super(name, scene);
         this.isURDFRobot = true;
         this.urdfNode = null;
 

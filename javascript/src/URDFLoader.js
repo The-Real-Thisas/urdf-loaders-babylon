@@ -1,32 +1,69 @@
-import * as THREE from 'three';
-import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
-import { ColladaLoader } from 'three/examples/jsm/loaders/ColladaLoader.js';
+import { StandardMaterial, Color3, Texture, MeshBuilder, Mesh, Vector3, Quaternion, Material, SceneLoader } from '@babylonjs/core';
+import { STLFileLoader } from '@babylonjs/loaders/STL/stlFileLoader.js';
+import '@babylonjs/loaders/glTF';
+
+// Prevent Y/Z axis swap — URDF coordinates should be used as-is in a right-handed scene
+STLFileLoader.DO_NOT_ALTER_FILE_COORDINATES = true;
 import { URDFRobot, URDFJoint, URDFLink, URDFCollider, URDFVisual, URDFMimicJoint } from './URDFClasses.js';
 
 /*
-Reference coordinate frames for THREE.js and ROS.
-Both coordinate systems are right handed so the URDF is instantiated without
-frame transforms. The resulting model can be rotated to rectify the proper up,
-right, and forward directions
+Reference coordinate frames for Babylon.js and ROS.
+Babylon.js is LEFT-handed, ROS/URDF is RIGHT-handed.
+To handle this, apply scaling (1, 1, -1) on the robot root node
+(handled in the viewer component).
 
-THREE.js
+Babylon.js
    Y
    |
    |
    .-----X
- ／
-Z
+    \
+     Z (into screen, left-handed)
 
-ROS URDf
+ROS URDF
        Z
        |   X
-       | ／
+       | /
  Y-----.
 
 */
 
-const tempQuaternion = new THREE.Quaternion();
-const tempEuler = new THREE.Euler();
+const tempQuaternion = new Quaternion();
+
+// Simple load tracker replacing THREE.LoadingManager
+class LoadTracker {
+
+    constructor() {
+
+        this._pending = 0;
+        this.onLoad = null;
+
+    }
+
+    itemStart() {
+
+        this._pending++;
+
+    }
+
+    itemEnd() {
+
+        this._pending--;
+        if (this._pending === 0 && this.onLoad) {
+
+            this.onLoad();
+
+        }
+
+    }
+
+    itemError(url) {
+
+        console.error(`URDFLoader: Failed to load: ${ url }`);
+
+    }
+
+}
 
 // take a vector "x y z" and process it into
 // an array [x, y, z]
@@ -37,28 +74,45 @@ function processTuple(val) {
 
 }
 
-// applies a rotation a threejs object in URDF order
+// Extract the base URL from a full URL path
+function extractUrlBase(url) {
+
+    return url.substring(0, url.lastIndexOf('/') + 1);
+
+}
+
+// applies a rotation to a Babylon.js node in URDF order
 function applyRotation(obj, rpy, additive = false) {
 
     // if additive is true the rotation is applied in
     // addition to the existing rotation
-    if (!additive) obj.rotation.set(0, 0, 0);
+    if (!additive) {
 
-    tempEuler.set(rpy[0], rpy[1], rpy[2], 'ZYX');
-    tempQuaternion.setFromEuler(tempEuler);
-    tempQuaternion.multiply(obj.quaternion);
-    obj.quaternion.copy(tempQuaternion);
+        obj.rotationQuaternion = new Quaternion();
+
+    }
+
+    // URDF uses ZYX Euler order (intrinsic)
+    // ZYX intrinsic = Qz * Qy * Qx
+    const qx = Quaternion.RotationAxis(new Vector3(1, 0, 0), rpy[0]);
+    const qy = Quaternion.RotationAxis(new Vector3(0, 1, 0), rpy[1]);
+    const qz = Quaternion.RotationAxis(new Vector3(0, 0, 1), rpy[2]);
+    const rpyQuat = qz.multiply(qy).multiply(qx);
+
+    rpyQuat.multiplyToRef(obj.rotationQuaternion, tempQuaternion);
+    obj.rotationQuaternion.copyFrom(tempQuaternion);
 
 }
 
 /* URDFLoader Class */
-// Loads and reads a URDF file into a THREEjs Object3D format
+// Loads and reads a URDF file into a Babylon.js TransformNode format
 export default
 class URDFLoader {
 
-    constructor(manager) {
+    constructor(scene) {
 
-        this.manager = manager || THREE.DefaultLoadingManager;
+        this.scene = scene || null;
+        this.manager = new LoadTracker();
         this.loadMeshCb = this.defaultMeshLoader.bind(this);
         this.parseVisual = true;
         this.parseCollision = false;
@@ -83,13 +137,11 @@ class URDFLoader {
     // onComplete:      Callback that is passed the model once loaded
     load(urdf, onComplete, onProgress, onError) {
 
-        // Check if a full URI is specified before
-        // prepending the package info
         const manager = this.manager;
-        const workingPath = THREE.LoaderUtils.extractUrlBase(urdf);
-        const urdfPath = this.manager.resolveURL(urdf);
+        const workingPath = extractUrlBase(urdf);
+        const urdfPath = urdf;
 
-        manager.itemStart(urdfPath);
+        manager.itemStart();
 
         fetch(urdfPath, this.fetchOptions)
             .then(res => {
@@ -114,7 +166,7 @@ class URDFLoader {
 
                 const model = this.parse(data, this.workingPath || workingPath);
                 onComplete(model);
-                manager.itemEnd(urdfPath);
+                manager.itemEnd();
 
             })
             .catch(e => {
@@ -129,7 +181,7 @@ class URDFLoader {
 
                 }
                 manager.itemError(urdfPath);
-                manager.itemEnd(urdfPath);
+                manager.itemEnd();
 
             });
 
@@ -137,11 +189,11 @@ class URDFLoader {
 
     parse(content, workingPath = this.workingPath) {
 
+        const scene = this.scene;
         const packages = this.packages;
         const loadMeshCb = this.loadMeshCb;
         const parseVisual = this.parseVisual;
         const parseCollision = this.parseCollision;
-        const manager = this.manager;
         const linkMap = {};
         const jointMap = {};
         const materialMap = {};
@@ -227,7 +279,7 @@ class URDFLoader {
             const links = robotNodes.filter(c => c.nodeName.toLowerCase() === 'link');
             const joints = robotNodes.filter(c => c.nodeName.toLowerCase() === 'joint');
             const materials = robotNodes.filter(c => c.nodeName.toLowerCase() === 'material');
-            const obj = new URDFRobot();
+            const obj = new URDFRobot('', scene);
 
             obj.robotName = robot.getAttribute('name');
             obj.urdfRobotNode = robot;
@@ -322,14 +374,14 @@ class URDFLoader {
             const mimicTag = children.find(n => n.nodeName.toLowerCase() === 'mimic');
             if (mimicTag) {
 
-                obj = new URDFMimicJoint();
+                obj = new URDFMimicJoint('', scene);
                 obj.mimicJoint = mimicTag.getAttribute('joint');
                 obj.multiplier = parseFloat(mimicTag.getAttribute('multiplier') || 1.0);
                 obj.offset = parseFloat(mimicTag.getAttribute('offset') || 0.0);
 
             } else {
 
-                obj = new URDFJoint();
+                obj = new URDFJoint('', scene);
 
             }
 
@@ -368,9 +420,9 @@ class URDFLoader {
                 }
             });
 
-            // Join the links
-            parent.add(obj);
-            obj.add(child);
+            // Join the links - Babylon.js uses child.parent = parentNode
+            obj.parent = parent;
+            child.parent = obj;
             applyRotation(obj, rpy);
             obj.position.set(xyz[0], xyz[1], xyz[2]);
 
@@ -380,7 +432,7 @@ class URDFLoader {
             if (axisNode) {
 
                 const axisXYZ = axisNode.getAttribute('xyz').split(/\s+/g).map(num => parseFloat(num));
-                obj.axis = new THREE.Vector3(axisXYZ[0], axisXYZ[1], axisXYZ[2]);
+                obj.axis = new Vector3(axisXYZ[0], axisXYZ[1], axisXYZ[2]);
                 obj.axis.normalize();
 
             }
@@ -394,7 +446,7 @@ class URDFLoader {
 
             if (target === null) {
 
-                target = new URDFLink();
+                target = new URDFLink('', scene);
 
             }
 
@@ -409,7 +461,7 @@ class URDFLoader {
                 visualNodes.forEach(vn => {
 
                     const v = processLinkElement(vn, materialMap);
-                    target.add(v);
+                    v.parent = target;
 
                     if (vn.hasAttribute('name')) {
 
@@ -430,7 +482,7 @@ class URDFLoader {
                 collisionNodes.forEach(cn => {
 
                     const c = processLinkElement(cn);
-                    target.add(c);
+                    c.parent = target;
 
                     if (cn.hasAttribute('name')) {
 
@@ -452,7 +504,7 @@ class URDFLoader {
         function processMaterial(node) {
 
             const matNodes = [ ...node.children ];
-            const material = new THREE.MeshPhongMaterial();
+            const material = new StandardMaterial(node.getAttribute('name') || '', scene);
 
             material.name = node.getAttribute('name') || '';
             matNodes.forEach(n => {
@@ -466,10 +518,14 @@ class URDFLoader {
                             .split(/\s/g)
                             .map(v => parseFloat(v));
 
-                    material.color.setRGB(rgba[0], rgba[1], rgba[2]);
-                    material.opacity = rgba[3];
-                    material.transparent = rgba[3] < 1;
-                    material.depthWrite = !material.transparent;
+                    material.diffuseColor = new Color3(rgba[0], rgba[1], rgba[2]);
+                    material.alpha = rgba[3];
+                    if (rgba[3] < 1) {
+
+                        material.transparencyMode = Material.MATERIAL_ALPHABLEND;
+                        material.disableDepthWrite = true;
+
+                    }
 
                 } else if (type === 'texture') {
 
@@ -478,10 +534,8 @@ class URDFLoader {
                     const filename = n.getAttribute('filename');
                     if (filename) {
 
-                        const loader = new THREE.TextureLoader(manager);
                         const filePath = resolvePath(filename);
-                        material.map = loader.load(filePath);
-                        material.map.colorSpace = THREE.SRGBColorSpace;
+                        material.diffuseTexture = new Texture(filePath, scene);
 
                     }
 
@@ -516,11 +570,11 @@ class URDFLoader {
 
             } else {
 
-                material = new THREE.MeshPhongMaterial();
+                material = new StandardMaterial('', scene);
 
             }
 
-            const group = isCollisionNode ? new URDFCollider() : new URDFVisual();
+            const group = isCollisionNode ? new URDFCollider('', scene) : new URDFVisual('', scene);
             group.urdfNode = vn;
 
             children.forEach(n => {
@@ -541,11 +595,11 @@ class URDFLoader {
                             if (scaleAttr) {
 
                                 const scale = processTuple(scaleAttr);
-                                group.scale.set(scale[0], scale[1], scale[2]);
+                                group.scaling.set(scale[0], scale[1], scale[2]);
 
                             }
 
-                            loadMeshCb(filePath, manager, (obj, err) => {
+                            loadMeshCb(filePath, scene, (obj, err) => {
 
                                 if (err) {
 
@@ -553,18 +607,20 @@ class URDFLoader {
 
                                 } else if (obj) {
 
-                                    if (obj instanceof THREE.Mesh) {
+                                    if (obj instanceof Mesh) {
 
                                         obj.material = material;
 
                                     }
 
-                                    // We don't expect non identity rotations or positions. In the case of
-                                    // COLLADA files the model might come in with a custom scale for unit
-                                    // conversion.
+                                    // We don't expect non identity rotations or positions.
                                     obj.position.set(0, 0, 0);
-                                    obj.quaternion.identity();
-                                    group.add(obj);
+                                    if (obj.rotationQuaternion) {
+
+                                        obj.rotationQuaternion.copyFrom(Quaternion.Identity());
+
+                                    }
+                                    obj.parent = group;
 
                                 }
 
@@ -574,38 +630,38 @@ class URDFLoader {
 
                     } else if (geoType === 'box') {
 
-                        const primitiveModel = new THREE.Mesh();
-                        primitiveModel.geometry = new THREE.BoxGeometry(1, 1, 1);
+                        const primitiveModel = MeshBuilder.CreateBox('box', { size: 1 }, scene);
                         primitiveModel.material = material;
 
                         const size = processTuple(n.children[0].getAttribute('size'));
-                        primitiveModel.scale.set(size[0], size[1], size[2]);
+                        primitiveModel.scaling.set(size[0], size[1], size[2]);
 
-                        group.add(primitiveModel);
+                        primitiveModel.parent = group;
 
                     } else if (geoType === 'sphere') {
 
-                        const primitiveModel = new THREE.Mesh();
-                        primitiveModel.geometry = new THREE.SphereGeometry(1, 30, 30);
+                        const primitiveModel = MeshBuilder.CreateSphere('sphere', { diameter: 2, segments: 30 }, scene);
                         primitiveModel.material = material;
 
                         const radius = parseFloat(n.children[0].getAttribute('radius')) || 0;
-                        primitiveModel.scale.set(radius, radius, radius);
+                        primitiveModel.scaling.set(radius, radius, radius);
 
-                        group.add(primitiveModel);
+                        primitiveModel.parent = group;
 
                     } else if (geoType === 'cylinder') {
 
-                        const primitiveModel = new THREE.Mesh();
-                        primitiveModel.geometry = new THREE.CylinderGeometry(1, 1, 1, 30);
+                        const primitiveModel = MeshBuilder.CreateCylinder('cylinder', { diameter: 2, height: 1, tessellation: 30 }, scene);
                         primitiveModel.material = material;
 
                         const radius = parseFloat(n.children[0].getAttribute('radius')) || 0;
                         const length = parseFloat(n.children[0].getAttribute('length')) || 0;
-                        primitiveModel.scale.set(radius, length, radius);
-                        primitiveModel.rotation.set(Math.PI / 2, 0, 0);
+                        // Three.js cylinder is Y-up, Babylon.js cylinder is also Y-up
+                        // Three.js original: scale(radius, length, radius), rotation(PI/2, 0, 0)
+                        // The rotation makes the cylinder lie along the Z axis (URDF convention)
+                        primitiveModel.scaling.set(radius, length, radius);
+                        primitiveModel.rotationQuaternion = Quaternion.RotationAxis(new Vector3(1, 0, 0), Math.PI / 2);
 
-                        group.add(primitiveModel);
+                        primitiveModel.parent = group;
 
                     }
 
@@ -615,7 +671,7 @@ class URDFLoader {
                     const rpy = processTuple(n.getAttribute('rpy'));
 
                     group.position.set(xyz[0], xyz[1], xyz[2]);
-                    group.rotation.set(0, 0, 0);
+                    group.rotationQuaternion = new Quaternion();
                     applyRotation(group, rpy);
 
                 }
@@ -631,20 +687,76 @@ class URDFLoader {
     }
 
     // Default mesh loading function
-    defaultMeshLoader(path, manager, done) {
+    defaultMeshLoader(path, scene, done) {
 
         if (/\.stl$/i.test(path)) {
 
-            const loader = new STLLoader(manager);
-            loader.load(path, geom => {
-                const mesh = new THREE.Mesh(geom, new THREE.MeshPhongMaterial());
-                done(mesh);
+            const rootUrl = path.substring(0, path.lastIndexOf('/') + 1);
+            const fileName = path.substring(path.lastIndexOf('/') + 1);
+
+            SceneLoader.ImportMesh('', rootUrl, fileName, scene, (meshes) => {
+
+                if (meshes.length > 0) {
+
+                    // If multiple meshes, create a parent node
+                    if (meshes.length === 1) {
+
+                        const mesh = meshes[0];
+                        mesh.material = new StandardMaterial('stl-material', scene);
+                        done(mesh);
+
+                    } else {
+
+                        const parent = new (Mesh.bind(Mesh, 'stl-root', scene))();
+                        meshes.forEach(m => {
+
+                            m.material = new StandardMaterial('stl-material', scene);
+                            m.parent = parent;
+
+                        });
+                        done(parent);
+
+                    }
+
+                }
+
+            }, null, (scene, message, exception) => {
+
+                console.warn(`URDFLoader: Could not load STL at ${ path }.`, message);
+                done(null, exception || new Error(message));
+
+            });
+
+        } else if (/\.(glb|gltf)$/i.test(path)) {
+
+            const rootUrl = path.substring(0, path.lastIndexOf('/') + 1);
+            const fileName = path.substring(path.lastIndexOf('/') + 1);
+
+            SceneLoader.ImportMesh('', rootUrl, fileName, scene, (meshes) => {
+
+                if (meshes.length === 1) {
+
+                    done(meshes[0]);
+
+                } else if (meshes.length > 1) {
+
+                    const parent = new (Mesh.bind(Mesh, 'gltf-root', scene))();
+                    meshes.forEach(m => { m.parent = parent; });
+                    done(parent);
+
+                }
+
+            }, null, (scene, message, exception) => {
+
+                console.warn(`URDFLoader: Could not load glTF at ${ path }.`, message);
+                done(null, exception || new Error(message));
+
             });
 
         } else if (/\.dae$/i.test(path)) {
 
-            const loader = new ColladaLoader(manager);
-            loader.load(path, dae => done(dae.scene));
+            console.warn(`URDFLoader: DAE/COLLADA files are not supported in Babylon.js. Please convert to glTF: ${ path }`);
+            done(null, new Error('DAE files not supported. Convert to glTF.'));
 
         } else {
 
@@ -654,4 +766,4 @@ class URDFLoader {
 
     }
 
-};
+}

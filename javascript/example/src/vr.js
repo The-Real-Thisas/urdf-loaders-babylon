@@ -1,84 +1,80 @@
 import {
-    WebGLRenderer,
-    PerspectiveCamera,
+    Engine,
     Scene,
-    Mesh,
-    PlaneGeometry,
-    ShadowMaterial,
+    ArcRotateCamera,
     DirectionalLight,
-    PCFSoftShadowMap,
-    Color,
-    AmbientLight,
-    Box3,
-    LoadingManager,
-    MathUtils,
-    Group,
-    BufferGeometry,
-    Float32BufferAttribute,
-    AdditiveBlending,
-    RingGeometry,
-    MeshBasicMaterial,
-    LineBasicMaterial,
-    Line,
-    Ray,
-    TorusGeometry,
-    SphereGeometry,
-    MeshPhongMaterial,
-} from 'three';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { VRButton } from 'three/examples/jsm/webxr/VRButton.js';
-import { XRControllerModelFactory } from 'three/examples/jsm/webxr/XRControllerModelFactory.js';
+    HemisphericLight,
+    ShadowGenerator,
+    MeshBuilder,
+    StandardMaterial,
+    Color3,
+    Vector3,
+    Mesh,
+    Quaternion,
+    SceneLoader,
+    WebXRDefaultExperience,
+} from '@babylonjs/core';
+import '@babylonjs/loaders/STL';
+import '@babylonjs/loaders/glTF';
 import URDFLoader from '../../src/URDFLoader.js';
 import { URDFDragControls } from '../../src/URDFDragControls.js';
 
-let scene, camera, renderer, robot, workspace;
-let controller, controllerGrip, ray, robotGroup;
-let dragControls, ground, intersectRing, hitSphere;
+let scene, camera, engine, robot;
+let dragControls;
 
 init();
 
-function init() {
+async function init() {
 
-    scene = new Scene();
-    scene.background = new Color(0xffab40);
+    const canvas = document.createElement('canvas');
+    canvas.style.width = '100%';
+    canvas.style.height = '100%';
+    document.body.appendChild(canvas);
 
-    robotGroup = new Group();
-    scene.add(robotGroup);
+    engine = new Engine(canvas, true);
+    scene = new Scene(engine);
+    scene.clearColor = new Color3(1.0, 0.67, 0.25);
 
-    workspace = new Group();
-    workspace.position.z = 3;
-    scene.add(workspace);
+    camera = new ArcRotateCamera('camera', -Math.PI / 2, Math.PI / 3, 5, Vector3.Zero(), scene);
+    camera.attachControl(canvas, true);
 
-    camera = new PerspectiveCamera();
-    workspace.add(camera);
+    const dirLight = new DirectionalLight('dirLight', new Vector3(-1, -6, -1), scene);
+    dirLight.intensity = 3.0;
+    dirLight.position = new Vector3(5, 30, 5);
+    const shadowGenerator = new ShadowGenerator(2048, dirLight);
+    shadowGenerator.useBlurExponentialShadowMap = true;
 
-    renderer = new WebGLRenderer({ antialias: true });
-    renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = PCFSoftShadowMap;
-    document.body.appendChild(renderer.domElement);
+    const ambientLight = new HemisphericLight('ambient', new Vector3(0, 1, 0), scene);
+    ambientLight.diffuse = new Color3(1.0, 0.72, 0.3);
+    ambientLight.intensity = 1.0;
 
-    ray = new Ray();
+    const ground = MeshBuilder.CreateGround('ground', { width: 30, height: 30 }, scene);
+    const groundMat = new StandardMaterial('groundMat', scene);
+    groundMat.diffuseColor = Color3.Black();
+    groundMat.alpha = 0.1;
+    ground.material = groundMat;
+    ground.receiveShadows = true;
 
-    const hoverMaterial = new MeshPhongMaterial({ emissive: 0xffab40, emissiveIntensity: 0.25 });
-    dragControls = new URDFDragControls(robotGroup);
+    // Hover material for drag controls
+    const hoverMaterial = new StandardMaterial('hoverMat', scene);
+    hoverMaterial.emissiveColor = new Color3(1.0, 0.67, 0.25);
+
+    dragControls = new URDFDragControls(scene);
+    dragControls.babylonScene = scene;
     dragControls.onHover = joint => {
 
         const traverse = c => {
 
-            if (c !== joint && c.isURDFJoint && c.jointType !== 'fixed') {
+            if (c !== joint && c.isURDFJoint && c.jointType !== 'fixed') return;
 
-                return;
-
-            }
-
-            if (c.isMesh) {
+            if (c instanceof Mesh) {
 
                 c.__originalMaterial = c.material;
                 c.material = hoverMaterial;
 
             }
 
-            c.children.forEach(traverse);
+            if (c.getChildren) c.getChildren().forEach(traverse);
 
         };
         traverse(joint);
@@ -88,228 +84,104 @@ function init() {
 
         const traverse = c => {
 
-            if (c !== joint && c.isURDFJoint && c.jointType !== 'fixed') {
+            if (c !== joint && c.isURDFJoint && c.jointType !== 'fixed') return;
 
-                return;
-
-            }
-
-            if (c.isMesh) {
+            if (c instanceof Mesh) {
 
                 c.material = c.__originalMaterial;
 
             }
 
-            c.children.forEach(traverse);
+            if (c.getChildren) c.getChildren().forEach(traverse);
 
         };
         traverse(joint);
 
     };
 
-    // vr
-    renderer.xr.enabled = true;
-    renderer.setAnimationLoop(render);
-    document.body.appendChild(VRButton.createButton(renderer));
-
-    const directionalLight = new DirectionalLight(0xffffff, 3.0);
-    directionalLight.castShadow = true;
-    directionalLight.shadow.mapSize.setScalar(2048);
-    directionalLight.position.set(5, 30, 5);
-    scene.add(directionalLight);
-
-    const ambientLight = new AmbientLight(0xffb74d, 1.0);
-    scene.add(ambientLight);
-
-    ground = new Mesh(new PlaneGeometry(), new ShadowMaterial({ opacity: 0.1 }));
-    ground.rotation.x = -Math.PI / 2;
-    ground.scale.setScalar(30);
-    ground.receiveShadow = true;
-    scene.add(ground);
-
-    const manager = new LoadingManager();
-    const loader = new URDFLoader(manager);
-    loader.loadMeshCb = function(path, manager, onComplete) {
+    // Load robot
+    const loader = new URDFLoader(scene);
+    loader.loadMeshCb = function(path, loaderScene, onComplete) {
         const ext = path.split(/\./g).pop().toLowerCase();
+        const rootUrl = path.substring(0, path.lastIndexOf('/') + 1);
+        const fileName = path.substring(path.lastIndexOf('/') + 1);
 
         switch (ext) {
 
             case 'gltf':
-                new GLTFLoader(manager).load(
-                    path,
-                    result => onComplete(result.scene),
-                    null,
-                    err => onComplete(null, err),
-                );
+            case 'glb':
+                SceneLoader.ImportMesh('', rootUrl, fileName, loaderScene, (meshes) => {
+
+                    if (meshes.length === 1) onComplete(meshes[0]);
+                    else if (meshes.length > 1) {
+
+                        const parent = new Mesh('gltf-root', loaderScene);
+                        meshes.forEach(m => { m.parent = parent; });
+                        onComplete(parent);
+
+                    }
+
+                }, null, (s, msg, err) => onComplete(null, err || new Error(msg)));
                 break;
             default:
-                loader.defaultMeshLoader(path, manager, onComplete);
+                loader.defaultMeshLoader(path, loaderScene, onComplete);
 
         }
 
     };
-    loader.load('../../../urdf/T12/urdf/T12_flipped.URDF', result => {
-        robot = result;
-    });
 
-    manager.onLoad = function() {
+    loader.manager.onLoad = () => {
 
-        robot.rotation.x = Math.PI / 2;
+        robot.rotationQuaternion = Quaternion.RotationAxis(new Vector3(1, 0, 0), Math.PI / 2);
         robot.traverse(c => {
-            c.castShadow = true;
-            c.receiveShadow = true;
+            if (c instanceof Mesh) {
+
+                shadowGenerator.addShadowCaster(c);
+                c.receiveShadows = true;
+
+            }
         });
+
+        const DEG2RAD = Math.PI / 180;
         for (let i = 1; i <= 6; i++) {
 
-            robot.joints[`HP${ i }`].setJointValue(MathUtils.degToRad(30));
-            robot.joints[`KP${ i }`].setJointValue(MathUtils.degToRad(120));
-            robot.joints[`AP${ i }`].setJointValue(MathUtils.degToRad(-60));
+            robot.joints[`HP${ i }`].setJointValue(30 * DEG2RAD);
+            robot.joints[`KP${ i }`].setJointValue(120 * DEG2RAD);
+            robot.joints[`AP${ i }`].setJointValue(-60 * DEG2RAD);
 
         }
-        robot.updateMatrixWorld(true);
-
-        const bb = new Box3();
-        bb.setFromObject(robot);
-
-        robot.position.y -= bb.min.y;
-
-        robotGroup.add(robot);
 
     };
 
-    const whiteMat = new MeshBasicMaterial({ color: 0xffffff });
-    intersectRing = new Mesh(new TorusGeometry(0.25, 0.02, 16, 100), whiteMat);
-    intersectRing.rotation.x = Math.PI / 2;
-    intersectRing.visible = false;
-    scene.add(intersectRing);
+    loader.load('../../../urdf/T12/urdf/T12_flipped.URDF', result => {
 
-    hitSphere = new Mesh(new SphereGeometry(0.01, 50, 50), whiteMat);
-    scene.add(hitSphere);
-
-    // vr controllers
-    controller = renderer.xr.getController(0);
-    controller.addEventListener('selectstart', () => {
-
-        dragControls.setGrabbed(true);
-        if (!dragControls.hovered && !dragControls.manipulating && intersectRing.visible) {
-
-            workspace.position.copy(intersectRing.position);
-
-        }
+        robot = result;
 
     });
-    controller.addEventListener('selectend', () => {
 
-        dragControls.setGrabbed(false);
+    // WebXR setup
+    try {
 
-    });
-    controller.addEventListener('connected', function(event) {
+        const xr = await WebXRDefaultExperience.CreateAsync(scene, {
+            floorMeshes: [ground],
+        });
 
-        this.controllerActive = true;
-        this.add(buildController(event.data));
+        // The WebXR experience provides basic VR interaction
+        console.log('WebXR experience created');
 
-    });
-    controller.addEventListener('disconnected', function() {
+    } catch (e) {
 
-        this.controllerActive = false;
-        this.remove(this.children[ 0 ]);
-
-    });
-    workspace.add(controller);
-
-    // controller models
-    const controllerModelFactory = new XRControllerModelFactory();
-    controllerGrip = renderer.xr.getControllerGrip(0);
-    controllerGrip.add(controllerModelFactory.createControllerModel(controllerGrip));
-    workspace.add(controllerGrip);
-
-    onResize();
-    window.addEventListener('resize', onResize);
-
-}
-
-function buildController(data) {
-
-    let geometry, material;
-
-    switch (data.targetRayMode) {
-
-        case 'tracked-pointer':
-
-            geometry = new BufferGeometry();
-            geometry.setAttribute('position', new Float32BufferAttribute([ 0, 0, 0, 0, 0, -1 ], 3));
-            geometry.setAttribute('color', new Float32BufferAttribute([ 0.5, 0.5, 0.5, 0, 0, 0 ], 3));
-
-            material = new LineBasicMaterial({
-                vertexColors: true,
-                blending: AdditiveBlending,
-                depthWrite: false,
-                transparent: true,
-            });
-
-            return new Line(geometry, material);
-
-        case 'gaze':
-
-            geometry = new RingGeometry(0.02, 0.04, 32).translate(0, 0, -1);
-            material = new MeshBasicMaterial({ opacity: 0.5, transparent: true });
-            return new Mesh(geometry, material);
+        console.warn('WebXR not available:', e);
 
     }
 
-}
+    window.addEventListener('resize', () => engine.resize());
+    engine.resize();
 
-function onResize() {
+    engine.runRenderLoop(() => {
 
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setPixelRatio(window.devicePixelRatio);
+        scene.render();
 
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
-
-}
-
-function render() {
-
-    ray.origin.set(0, 0, 0).applyMatrix4(controller.matrixWorld);
-    ray.direction.set(0, 0, -1).transformDirection(controller.matrixWorld);
-    dragControls.moveRay(ray);
-
-    if (!dragControls.hovered && !dragControls.manipulating) {
-
-        const hit = dragControls.raycaster.intersectObject(ground)[0];
-        hitSphere.visible = false;
-        if (hit) {
-
-            intersectRing.position.copy(hit.point);
-            intersectRing.visible = true;
-
-        } else {
-
-            intersectRing.visible = false;
-
-        }
-
-        if (controller.children[0]) {
-
-            controller.children[0].scale.setScalar(1);
-
-        }
-
-    } else {
-
-        if (controller.children[0]) {
-
-            controller.children[0].scale.setScalar(dragControls.hitDistance);
-
-        }
-
-        ray.at(dragControls.hitDistance, hitSphere.position);
-        hitSphere.visible = true;
-        intersectRing.visible = false;
-
-    }
-
-    renderer.render(scene, camera);
+    });
 
 }
