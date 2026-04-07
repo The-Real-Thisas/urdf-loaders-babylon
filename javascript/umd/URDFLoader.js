@@ -1164,6 +1164,8 @@
 
                                 loadMeshCb(filePath, scene, (obj, err) => {
 
+                                    if (scene.isDisposed) return;
+
                                     if (err) {
 
                                         console.error('URDFLoader: Error loading mesh.', err);
@@ -1259,6 +1261,8 @@
 
                 core.SceneLoader.ImportMesh('', rootUrl, fileName, scene, (meshes) => {
 
+                    if (scene.isDisposed) return;
+
                     if (meshes.length > 0) {
 
                         // If multiple meshes, create a parent node
@@ -1285,6 +1289,8 @@
 
                 }, null, (scene, message, exception) => {
 
+                    if (scene.isDisposed) return;
+
                     console.warn(`URDFLoader: Could not load STL at ${ path }.`, message);
                     done(null, exception || new Error(message));
 
@@ -1296,6 +1302,8 @@
                 const fileName = path.substring(path.lastIndexOf('/') + 1);
 
                 core.SceneLoader.ImportMesh('', rootUrl, fileName, scene, (meshes) => {
+
+                    if (scene.isDisposed) return;
 
                     if (meshes.length === 1) {
 
@@ -1310,6 +1318,8 @@
                     }
 
                 }, null, (scene, message, exception) => {
+
+                    if (scene.isDisposed) return;
 
                     console.warn(`URDFLoader: Could not load glTF at ${ path }.`, message);
                     done(null, exception || new Error(message));

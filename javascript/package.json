@@ -1,6 +1,6 @@
 {
   "name": "urdf-loader-babylonjs",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "URDF Loader for Babylon.js and webcomponent viewer",
   "main": "src/URDFLoader.js",
   "type": "module",
@@ -29,12 +29,12 @@
     "webcomponents"
   ],
   "peerDependencies": {
-    "@babylonjs/core": ">=6.0.0",
-    "@babylonjs/loaders": ">=6.0.0"
+    "@babylonjs/core": ">=9.1.0",
+    "@babylonjs/loaders": ">=9.1.0"
   },
   "devDependencies": {
-    "@babylonjs/core": "^7.0.0",
-    "@babylonjs/loaders": "^7.0.0",
+    "@babylonjs/core": "^9.1.0",
+    "@babylonjs/loaders": "^9.1.0",
     "@eslint/js": "^9.19.0",
     "@rollup/plugin-node-resolve": "^16.0.0",
     "@vitest/eslint-plugin": "^1.1.25",
