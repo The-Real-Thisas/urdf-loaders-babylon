@@ -119,6 +119,12 @@ class URDFLoader {
         this.packages = '';
         this.workingPath = '';
         this.fetchOptions = {};
+        // Optional hook: (mesh, originalMaterial) => void. Called once per
+        // mesh produced by defaultMeshLoader, after the mesh exists and its
+        // original material is assigned (StandardMaterial for STL; the glTF
+        // loader's material for GLB/GLTF). Consumers can inspect the source
+        // material (e.g. baseColor) and swap mesh.material in place.
+        this.onMeshLoaded = null;
 
     }
 
@@ -192,6 +198,7 @@ class URDFLoader {
         const scene = this.scene;
         const packages = this.packages;
         const loadMeshCb = this.loadMeshCb;
+        const onMeshLoaded = this.onMeshLoaded;
         const parseVisual = this.parseVisual;
         const parseCollision = this.parseCollision;
         const linkMap = {};
@@ -609,7 +616,12 @@ class URDFLoader {
 
                                 } else if (obj) {
 
-                                    if (obj instanceof Mesh) {
+                                    // Skip the URDF-material override when the
+                                    // consumer has installed an onMeshLoaded
+                                    // hook — they take full responsibility for
+                                    // mesh materials (including per-primitive
+                                    // handling for multi-mesh glTF imports).
+                                    if (obj instanceof Mesh && !onMeshLoaded) {
 
                                         obj.material = material;
 
@@ -707,6 +719,7 @@ class URDFLoader {
 
                         const mesh = meshes[0];
                         mesh.material = new StandardMaterial('stl-material', scene);
+                        if (this.onMeshLoaded) this.onMeshLoaded(mesh, mesh.material);
                         done(mesh);
 
                     } else {
@@ -715,6 +728,7 @@ class URDFLoader {
                         meshes.forEach(m => {
 
                             m.material = new StandardMaterial('stl-material', scene);
+                            if (this.onMeshLoaded) this.onMeshLoaded(m, m.material);
                             m.parent = parent;
 
                         });
@@ -744,12 +758,18 @@ class URDFLoader {
 
                 if (meshes.length === 1) {
 
+                    if (this.onMeshLoaded) this.onMeshLoaded(meshes[0], meshes[0].material);
                     done(meshes[0]);
 
                 } else if (meshes.length > 1) {
 
                     const parent = new (Mesh.bind(Mesh, 'gltf-root', scene))();
-                    meshes.forEach(m => { m.parent = parent; });
+                    meshes.forEach(m => {
+
+                        if (this.onMeshLoaded) this.onMeshLoaded(m, m.material);
+                        m.parent = parent;
+
+                    });
                     done(parent);
 
                 }

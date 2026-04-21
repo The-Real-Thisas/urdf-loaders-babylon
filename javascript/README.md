@@ -213,6 +213,16 @@ constructor( scene : Scene )
 
 Constructor. Scene is the Babylon.js scene that nodes will be created in.
 
+### .onMeshLoaded
+
+```js
+onMeshLoaded : ( (mesh : AbstractMesh, originalMaterial : Material | null) => void ) | null
+```
+
+Optional hook fired once per mesh produced by the default mesh loader, right after the mesh has been created and its source material assigned (`StandardMaterial` named `stl-material` for STL imports; the glTF loader's material for `.glb`/`.gltf` imports). The consumer receives the mesh and the source material so it can extract a base color and swap `mesh.material` in place — for example, to replace every mesh with a shared or per-link `StandardMaterial` derived from the glTF `baseColorFactor`.
+
+When `onMeshLoaded` is set, URDFLoader will **not** override `mesh.material` with a `<material>` tag parsed from the URDF — the consumer's hook has final say over materials. Set to `null` (the default) to preserve the original URDF-driven material assignment.
+
 ### .load
 
 ```js

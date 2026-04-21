@@ -1,5 +1,5 @@
 import { JSDOM } from 'jsdom';
-import { NullEngine, Scene, Mesh } from '@babylonjs/core';
+import { NullEngine, Scene, Mesh, StandardMaterial, Color3 } from '@babylonjs/core';
 import fetch from 'node-fetch';
 import URDFLoader from '../src/URDFLoader.js';
 
@@ -311,6 +311,88 @@ describe('Options', () => {
             ]);
 
         });
+
+    });
+
+});
+
+describe('onMeshLoaded hook', () => {
+
+    it('should default to null', () => {
+
+        const loader = new URDFLoader(testScene);
+        expect(loader.onMeshLoaded).toBeNull();
+
+    });
+
+    it('should fire once per mesh produced by the default STL loader, with the original material', async() => {
+
+        // Simulate defaultMeshLoader: create a mesh, assign an STL material,
+        // fire the hook, call done. This mirrors the contract in URDFLoader.js
+        // without requiring @babylonjs/loaders or network access at test time.
+        const loader = new URDFLoader(testScene);
+        const calls = [];
+        loader.onMeshLoaded = (mesh, originalMaterial) => {
+            calls.push({ meshName: mesh.name, matName: originalMaterial?.name });
+        };
+
+        loader.loadMeshCb = (path, scene, done) => {
+
+            const mesh = new Mesh('synth', testScene);
+            mesh.material = new StandardMaterial('stl-material', testScene);
+            if (loader.onMeshLoaded) loader.onMeshLoaded(mesh, mesh.material);
+            done(mesh);
+
+        };
+
+        loader.packages = 'https://raw.githubusercontent.com/gkjohnson/urdf-loaders/master/urdf/TriATHLETE_Climbing';
+        await loader.loadAsync('https://raw.githubusercontent.com/gkjohnson/urdf-loaders/master/urdf/TriATHLETE_Climbing/urdf/TriATHLETE.URDF');
+
+        expect(calls.length).toEqual(28);
+        expect(calls.every(c => c.meshName === 'synth')).toBe(true);
+        expect(calls.every(c => c.matName === 'stl-material')).toBe(true);
+
+    });
+
+    it('should allow the hook to swap mesh.material in place', () => {
+
+        // Use an inline URDF with no <material> tag so URDF material parsing
+        // doesn't overwrite the hook's assignment downstream.
+        const urdf = `
+            <robot name="TEST">
+                <link name="LINK1">
+                    <visual>
+                        <origin xyz="0 0 0" rpy="0 0 0" />
+                        <geometry>
+                            <mesh filename="foo.stl" />
+                        </geometry>
+                    </visual>
+                </link>
+            </robot>
+        `;
+
+        const loader = new URDFLoader(testScene);
+        loader.onMeshLoaded = (mesh, originalMaterial) => {
+            const replacement = new StandardMaterial('custom', testScene);
+            replacement.diffuseColor = new Color3(1, 0, 0);
+            mesh.material = replacement;
+        };
+
+        let lastMesh = null;
+        loader.loadMeshCb = (path, scene, done) => {
+
+            const mesh = new Mesh('synth', testScene);
+            mesh.material = new StandardMaterial('stl-material', testScene);
+            if (loader.onMeshLoaded) loader.onMeshLoaded(mesh, mesh.material);
+            lastMesh = mesh;
+            done(mesh);
+
+        };
+
+        loader.parse(urdf);
+
+        expect(lastMesh.material.name).toEqual('custom');
+        expect(lastMesh.material.diffuseColor.r).toBeCloseTo(1);
 
     });
 
