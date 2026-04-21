@@ -171,7 +171,11 @@ class URDFLoader {
             .then(data => {
 
                 const model = this.parse(data, this.workingPath || workingPath);
-                onComplete(model);
+                // Defer onComplete until every mesh load tracked by the
+                // LoadTracker has also finished. parse() kicks off async
+                // loadMeshCb calls that increment pending; onLoad fires when
+                // pending returns to zero after our own itemEnd below.
+                manager.onLoad = () => { onComplete(model); };
                 manager.itemEnd();
 
             })
@@ -196,6 +200,7 @@ class URDFLoader {
     parse(content, workingPath = this.workingPath) {
 
         const scene = this.scene;
+        const manager = this.manager;
         const packages = this.packages;
         const loadMeshCb = this.loadMeshCb;
         const onMeshLoaded = this.onMeshLoaded;
@@ -606,9 +611,23 @@ class URDFLoader {
 
                             }
 
+                            // Track each mesh load on the LoadTracker so
+                            // `onLoad` fires only after all meshes have
+                            // attached. Without this the top-level
+                            // `onComplete` runs right after parse returns —
+                            // before any async STL/GLB loads finish — so
+                            // callers observe an empty robot tree and can't
+                            // populate light include-lists, selection sets,
+                            // etc. from the final mesh set.
+                            manager.itemStart();
                             loadMeshCb(filePath, scene, (obj, err) => {
 
-                                if (scene.isDisposed) return;
+                                if (scene.isDisposed) {
+
+                                    manager.itemEnd();
+                                    return;
+
+                                }
 
                                 if (err) {
 
@@ -637,6 +656,8 @@ class URDFLoader {
                                     obj.parent = group;
 
                                 }
+
+                                manager.itemEnd();
 
                             });
 

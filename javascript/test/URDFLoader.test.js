@@ -316,6 +316,45 @@ describe('Options', () => {
 
 });
 
+describe('async mesh loading completion', () => {
+
+    it('should defer loadAsync resolution until all async loadMeshCb calls have completed', async() => {
+
+        // Simulate real async mesh loaders (STL/GLB loaders are async).
+        // Before the LoadTracker fix, loadAsync resolved right after parse
+        // returned — before any done() callback fired — so the resolved
+        // robot had no attached meshes.
+        const loader = new URDFLoader(testScene);
+        loader.packages = 'https://raw.githubusercontent.com/gkjohnson/urdf-loaders/master/urdf/TriATHLETE_Climbing';
+
+        let inFlight = 0;
+        let maxInFlight = 0;
+        loader.loadMeshCb = (path, scene, done) => {
+            inFlight++;
+            maxInFlight = Math.max(maxInFlight, inFlight);
+            // Force done() onto a microtask so it runs after parse returns.
+            Promise.resolve().then(() => {
+                inFlight--;
+                const mesh = new Mesh('asyncSynth', testScene);
+                done(mesh);
+            });
+        };
+
+        const robot = await loader.loadAsync('https://raw.githubusercontent.com/gkjohnson/urdf-loaders/master/urdf/TriATHLETE_Climbing/urdf/TriATHLETE.URDF');
+
+        // All async loads should have been in flight at some point ...
+        expect(maxInFlight).toBeGreaterThan(0);
+        // ... and all should have resolved by the time loadAsync resolves.
+        expect(inFlight).toBe(0);
+
+        let meshCount = 0;
+        robot.traverse(c => { if (c.name === 'asyncSynth') meshCount++; });
+        expect(meshCount).toEqual(28);
+
+    });
+
+});
+
 describe('onMeshLoaded hook', () => {
 
     it('should default to null', () => {

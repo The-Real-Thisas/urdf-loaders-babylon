@@ -1,6 +1,6 @@
 {
   "name": "urdf-loader-babylonjs",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "URDF Loader for Babylon.js and webcomponent viewer",
   "main": "src/URDFLoader.js",
   "type": "module",
